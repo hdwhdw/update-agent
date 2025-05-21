@@ -1,0 +1,23 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+upgrade-agent
+
+# Docker files
+Dockerfile
+.dockerignore
+
+# Editor files
+.vscode
+.idea
+
+# Temp files
+*.swp
+*.swo
+*~
+
+# System files
+.DS_Store
+Thumbs.db
