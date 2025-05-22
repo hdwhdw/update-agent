@@ -99,6 +99,21 @@ func (s *Service) performUpdate(cfg config.Config) {
 			systemTime, timeResp.GetTime())
 	}
 
+	// Get OS version via gNOI.OS.Verify
+	osCtx, osCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer osCancel()
+
+	osResp, err := client.GetOSVersion(osCtx)
+	if err != nil {
+		log.Printf("Warning: Failed to get OS version: %v", err)
+		// Continue with update even if OS version request fails
+	} else {
+		log.Printf("OS version before update: %s", osResp.GetVersion())
+		if failMsg := osResp.GetActivationFailMessage(); failMsg != "" {
+			log.Printf("Previous activation failure message: %s", failMsg)
+		}
+	}
+
 	// Prepare update parameters
 	params := &gnoi_sonic.FirmwareUpdateParams{
 		FirmwareSource:   cfg.FirmwareSource,
@@ -112,6 +127,20 @@ func (s *Service) performUpdate(cfg config.Config) {
 	}
 
 	log.Printf("Firmware update to version %s completed successfully", cfg.TargetVersion)
+
+	// Get OS version after update via gNOI.OS.Verify to confirm successful update
+	postUpdateOsCtx, postUpdateOsCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer postUpdateOsCancel()
+
+	postUpdateOsResp, err := client.GetOSVersion(postUpdateOsCtx)
+	if err != nil {
+		log.Printf("Warning: Failed to get OS version after update: %v", err)
+	} else {
+		log.Printf("OS version after update: %s", postUpdateOsResp.GetVersion())
+		if failMsg := postUpdateOsResp.GetActivationFailMessage(); failMsg != "" {
+			log.Printf("Update activation failure message: %s", failMsg)
+		}
+	}
 }
 
 // Close cleans up resources

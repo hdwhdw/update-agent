@@ -9,6 +9,7 @@ import (
 
 	gnoisonic "upgrade-agent/gnoi_sonic"
 
+	ospb "github.com/openconfig/gnoi/os"
 	syspb "github.com/openconfig/gnoi/system"
 
 	"google.golang.org/grpc"
@@ -20,6 +21,7 @@ type Client struct {
 	conn          *grpc.ClientConn
 	client        gnoisonic.SonicUpgradeServiceClient
 	systemClient  syspb.SystemClient
+	osClient      ospb.OSClient
 }
 
 // NewClient creates a new gRPC client for the SonicUpgradeService.
@@ -44,11 +46,13 @@ func NewClient(target string) (*Client, error) {
 
 	sonicClient := gnoisonic.NewSonicUpgradeServiceClient(conn)
 	systemClient := syspb.NewSystemClient(conn)
+	osClient := ospb.NewOSClient(conn)
 
 	return &Client{
 		conn:         conn,
 		client:       sonicClient,
 		systemClient: systemClient,
+		osClient:     osClient,
 	}, nil
 }
 
@@ -108,4 +112,21 @@ func (c *Client) GetSystemTime(ctx context.Context) (*syspb.TimeResponse, error)
 	systemTime := time.Unix(nanos/1e9, nanos%1e9)
 	log.Printf("System time response: time=%v", systemTime)
 	return timeResp, nil
+}
+
+// GetOSVersion retrieves the current OS version from gNOI OS service
+func (c *Client) GetOSVersion(ctx context.Context) (*ospb.VerifyResponse, error) {
+	if c.osClient == nil {
+		return nil, fmt.Errorf("OS client not initialized")
+	}
+
+	log.Println("Requesting OS version via gNOI.OS.Verify")
+	verifyResp, err := c.osClient.Verify(ctx, &ospb.VerifyRequest{})
+	if err != nil {
+		log.Printf("Failed to get OS version: %v", err)
+		return nil, err
+	}
+
+	log.Printf("OS version response: version=%v", verifyResp.GetVersion())
+	return verifyResp, nil
 }
