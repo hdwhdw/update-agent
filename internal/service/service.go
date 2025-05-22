@@ -1,0 +1,126 @@
+package service
+
+import (
+	"context"
+	"log"
+	"sync"
+	"time"
+
+	"upgrade-agent/gnoi_sonic"
+	"upgrade-agent/internal/config"
+	"upgrade-agent/internal/grpcclient"
+)
+
+// Service manages the firmware update process
+type Service struct {
+	client        *grpcclient.Client
+	currentConfig config.Config
+	lastVersion   string
+	lock          sync.Mutex
+}
+
+// NewService creates a new service instance
+func NewService() *Service {
+	return &Service{}
+}
+
+// UpdateConfig handles updates to the configuration
+func (s *Service) UpdateConfig(cfg config.Config) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	log.Printf("Received config update: target version=%s", cfg.TargetVersion)
+
+	// Save the new config
+	s.currentConfig = cfg
+
+	// If target version has changed, trigger update
+	if s.lastVersion != "" && s.lastVersion != cfg.TargetVersion {
+		log.Printf("Target version changed from %s to %s, triggering update",
+			s.lastVersion, cfg.TargetVersion)
+
+		go s.performUpdate(cfg)
+	}
+
+	s.lastVersion = cfg.TargetVersion
+}
+
+// Initialize sets up the initial service state
+func (s *Service) Initialize(cfg config.Config) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	// Create a new gRPC client
+	client, err := grpcclient.NewClient(cfg.GrpcTarget)
+	if err != nil {
+		return err
+	}
+
+	s.client = client
+	s.currentConfig = cfg
+	s.lastVersion = cfg.TargetVersion
+
+	log.Printf("Service initialized with target version: %s", cfg.TargetVersion)
+	return nil
+}
+
+// performUpdate initiates a firmware update based on the provided config
+func (s *Service) performUpdate(cfg config.Config) {
+	// Create a copy of the config to avoid race conditions
+	s.lock.Lock()
+	client := s.client
+	s.lock.Unlock()
+
+	if client == nil {
+		log.Println("Cannot perform update: client not initialized")
+		return
+	}
+
+	log.Printf("Starting firmware update to version %s", cfg.TargetVersion)
+	log.Printf("Using target: %s, firmware: %s, updateMlnxCpld: %s",
+		cfg.GrpcTarget, cfg.FirmwareSource, cfg.UpdateMlnxCpldFw)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// First, get the system time via gNOI.System.Time
+	timeCtx, timeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer timeCancel()
+
+	timeResp, err := client.GetSystemTime(timeCtx)
+	if err != nil {
+		log.Printf("Warning: Failed to get system time: %v", err)
+		// Continue with update even if time request fails
+	} else {
+		nanos := int64(timeResp.GetTime())
+		systemTime := time.Unix(nanos/1e9, nanos%1e9)
+		log.Printf("System time before update: %v (timestamp: %d ns)",
+			systemTime, timeResp.GetTime())
+	}
+
+	// Prepare update parameters
+	params := &gnoi_sonic.FirmwareUpdateParams{
+		FirmwareSource:   cfg.FirmwareSource,
+		UpdateMlnxCpldFw: cfg.UpdateMlnxCpldFw == "true",
+	}
+
+	// Initiate the update
+	if err := client.UpdateFirmware(ctx, params); err != nil {
+		log.Printf("Firmware update failed: %v", err)
+		return
+	}
+
+	log.Printf("Firmware update to version %s completed successfully", cfg.TargetVersion)
+}
+
+// Close cleans up resources
+func (s *Service) Close() error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if s.client != nil {
+		return s.client.Close()
+	}
+	return nil
+}

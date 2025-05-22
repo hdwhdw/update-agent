@@ -36,5 +36,10 @@ RUN adduser -D -h /app appuser && \
 
 USER appuser
 
+# Set environment variables to ensure proper logging
+ENV GO_LOG=stderr
+# Make sure stdout/stderr are unbuffered to see logs in real-time
+ENV PYTHONUNBUFFERED=1
+
 # Command to run the executable
 ENTRYPOINT ["/app/upgrade-agent"]

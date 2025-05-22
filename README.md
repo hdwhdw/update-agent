@@ -44,3 +44,44 @@ docker run --network=host \
   -v /host/path/to/firmware:/firmware \
   upgrade-agent:latest 192.168.1.100:8080 /firmware/firmware.bin true
 ```
+
+## Testing
+
+The project includes scripts for testing the containerized agent:
+
+```bash
+# Run the test scripts
+cd /path/to/upgrade-agent
+./test/test_upgrade.sh         # Run test in background mode
+./test/test_upgrade.sh -i      # Run test in interactive mode with logs visible
+```
+
+### Viewing Logs
+
+Several options are available for viewing container logs:
+
+1. **Interactive Mode**:
+   ```bash
+   ./test/test_upgrade.sh --interactive
+   ```
+
+2. **Monitor Logs**:
+   ```bash
+   ./test/monitor_logs.sh [container-name]        # Monitor existing container
+   ./test/monitor_logs.sh --wait                  # Wait for container and monitor until test completes
+   ```
+
+3. **Split Terminal with tmux** (Recommended):
+   ```bash
+   ./test/run_with_logs.sh
+   ```
+
+4. **Standard Docker Logs**:
+   ```bash
+   docker logs -f upgrade-agent-test
+   ```
+
+5. **Log File**:
+   ```bash
+   tail -f /tmp/agent-output.log
+   ```

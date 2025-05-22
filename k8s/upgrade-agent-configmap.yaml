@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: upgrade-agent-config
+  namespace: default
+data:
+  config.yaml: |
+    grpcTarget: 10.250.0.101:8080
+    firmwareSource: /firmware/firmware.bin
+    updateMlnxCpldFw: "false"
+    targetVersion: "1.0.0"  # When this field is updated, it will trigger an update
