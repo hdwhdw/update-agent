@@ -61,10 +61,10 @@ docker run --network=host \
 
 ## Testing
 
-The project includes scripts for testing the containerized agent:
+The project includes a simple script for testing the containerized agent:
 
 ```bash
-# Run the test scripts
+# Run the test script
 cd /path/to/upgrade-agent
 ./test/test_upgrade.sh                            # Run test in background mode
 ./test/test_upgrade.sh -i                         # Run test in interactive mode with logs visible
@@ -86,17 +86,12 @@ Several options are available for viewing container logs:
    ./test/monitor_logs.sh --wait                  # Wait for container and monitor until test completes
    ```
 
-3. **Split Terminal with tmux** (Recommended):
-   ```bash
-   ./test/run_with_logs.sh
-   ```
-
-4. **Standard Docker Logs**:
+3. **Standard Docker Logs**:
    ```bash
    docker logs -f upgrade-agent-test
    ```
 
-5. **Log File**:
+4. **Log File**:
    ```bash
    tail -f /tmp/agent-output.log
    ```
