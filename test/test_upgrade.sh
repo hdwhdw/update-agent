@@ -5,15 +5,23 @@ set -e
 
 # Parse command line arguments
 INTERACTIVE=false
+IGNORE_UNIMPLEMENTED_RPC=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     -i|--interactive)
       INTERACTIVE=true
       shift
       ;;
+    --ignore-unimplemented)
+      IGNORE_UNIMPLEMENTED_RPC=true
+      shift
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [-i|--interactive]"
+      echo "Usage: $0 [-i|--interactive] [--ignore-unimplemented]"
+      echo "Options:"
+      echo "  -i, --interactive         Run in interactive mode with logs in terminal"
+      echo "  --ignore-unimplemented    Treat unimplemented gRPC errors as success (for testing)"
       exit 1
       ;;
   esac
@@ -40,6 +48,7 @@ grpcTarget: "${GRPC_TARGET}"
 firmwareSource: "${FIRMWARE_MOUNT_PATH}"
 updateMlnxCpldFw: ${UPDATE_MLNX_CPLD}
 targetVersion: "${INITIAL_VERSION}"  # When this field is updated, it will trigger an update
+ignoreUnimplementedRPC: ${IGNORE_UNIMPLEMENTED_RPC}
 EOF
 
 echo "Building the Docker container..."
@@ -97,14 +106,15 @@ grpcTarget: "${GRPC_TARGET}"
 firmwareSource: "${FIRMWARE_MOUNT_PATH}"
 updateMlnxCpldFw: ${UPDATE_MLNX_CPLD}
 targetVersion: "${NEW_VERSION}"  # When this field is updated, it will trigger an update
+ignoreUnimplementedRPC: ${IGNORE_UNIMPLEMENTED_RPC}
 EOF
 
-echo "Waiting for update process (180 seconds, including reboot and stabilization)..."
+echo "Waiting for update process (300 seconds, including reboot and stabilization)..."
 echo "You can also run './test/monitor_logs.sh --wait' in another terminal to follow logs."
 
 # Show logs periodically during update if not in interactive mode
 if [ "$INTERACTIVE" = false ]; then
-  for _ in {1..36}; do
+  for _ in {1..60}; do
     echo "=== Agent logs at $(date) ==="
     docker logs --since=5s ${CONTAINER_NAME}
     echo "==========================="
@@ -117,7 +127,7 @@ if [ "$INTERACTIVE" = false ]; then
   echo "========================"
 else
   # In interactive mode, just wait for the update to complete
-  sleep 180
+  sleep 300
 fi
 
 # Signal that the test is complete

@@ -23,6 +23,20 @@ Example:
 docker run --network=host upgrade-agent:latest 192.168.1.100:8080 /path/to/firmware.bin true
 ```
 
+## Configuration
+
+The agent can be configured using a YAML file. By default, it looks for `/etc/upgrade-agent/config.yaml`.
+
+Example configuration:
+
+```yaml
+grpcTarget: "192.168.1.100:8080"        # gRPC server address (host:port)
+firmwareSource: "/firmware/sonic.bin"   # Path to firmware file
+updateMlnxCpldFw: true                  # Whether to update MLNX CPLD firmware
+targetVersion: "1.0.0"                  # Target firmware version
+ignoreUnimplementedRPC: false           # Whether to treat unimplemented gRPC errors as success (for testing)
+```
+
 ## Environment Variables
 
 You can also configure the application using environment variables:
@@ -52,8 +66,9 @@ The project includes scripts for testing the containerized agent:
 ```bash
 # Run the test scripts
 cd /path/to/upgrade-agent
-./test/test_upgrade.sh         # Run test in background mode
-./test/test_upgrade.sh -i      # Run test in interactive mode with logs visible
+./test/test_upgrade.sh                            # Run test in background mode
+./test/test_upgrade.sh -i                         # Run test in interactive mode with logs visible
+./test/test_upgrade.sh --ignore-unimplemented     # Run with unimplemented gRPC errors treated as success
 ```
 
 ### Viewing Logs

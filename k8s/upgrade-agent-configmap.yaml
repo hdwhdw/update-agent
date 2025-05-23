@@ -9,3 +9,4 @@ data:
     firmwareSource: /firmware/firmware.bin
     updateMlnxCpldFw: "false"
     targetVersion: "1.0.0"  # When this field is updated, it will trigger an update
+    ignoreUnimplementedRPC: false  # When true, treat "unimplemented" gRPC errors as success

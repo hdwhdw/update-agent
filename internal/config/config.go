@@ -14,10 +14,11 @@ import (
 
 // Config holds the application configuration loaded from YAML
 type Config struct {
-	GrpcTarget       string `yaml:"grpcTarget"`
-	FirmwareSource   string `yaml:"firmwareSource"`
-	UpdateMlnxCpldFw string `yaml:"updateMlnxCpldFw"`
-	TargetVersion    string `yaml:"targetVersion"`
+	GrpcTarget              string `yaml:"grpcTarget"`
+	FirmwareSource          string `yaml:"firmwareSource"`
+	UpdateMlnxCpldFw        string `yaml:"updateMlnxCpldFw"`
+	TargetVersion           string `yaml:"targetVersion"`
+	IgnoreUnimplementedRPC  bool   `yaml:"ignoreUnimplementedRPC"`  // When true, treat "unimplemented" gRPC errors as success
 }
 
 // Manager handles loading and watching configuration

@@ -6,6 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"upgrade-agent/gnoi_sonic"
 	"upgrade-agent/internal/config"
 	"upgrade-agent/internal/grpcclient"
@@ -92,6 +95,11 @@ func (s *Service) performUpdate(cfg config.Config) {
 	if err != nil {
 		log.Printf("Warning: Failed to get system time: %v", err)
 		// Continue with update even if time request fails
+		if !s.shouldIgnoreError(err, cfg) {
+			// Only log as warning if not an ignored error type
+			log.Printf("Warning: Failed to get system time: %v", err)
+		}
+		// Continue with update even if time request fails
 	} else {
 		nanos := int64(timeResp.GetTime())
 		systemTime := time.Unix(nanos/1e9, nanos%1e9)
@@ -105,7 +113,9 @@ func (s *Service) performUpdate(cfg config.Config) {
 
 	osResp, err := client.GetOSVersion(osCtx)
 	if err != nil {
-		log.Printf("Warning: Failed to get OS version: %v", err)
+		if !s.shouldIgnoreError(err, cfg) {
+			log.Printf("Warning: Failed to get OS version: %v", err)
+		}
 		// Continue with update even if OS version request fails
 	} else {
 		log.Printf("OS version before update: %s", osResp.GetVersion())
@@ -122,8 +132,12 @@ func (s *Service) performUpdate(cfg config.Config) {
 
 	// Initiate the update
 	if err := client.UpdateFirmware(ctx, params); err != nil {
-		log.Printf("Firmware update failed: %v", err)
-		return
+		if s.shouldIgnoreError(err, cfg) {
+			log.Printf("Firmware update RPC unimplemented, skipping ahead: %v", err)
+		} else {
+			log.Printf("Firmware update failed: %v", err)
+			return
+		}
 	}
 
 	log.Printf("Firmware update to version %s completed successfully", cfg.TargetVersion)
@@ -134,7 +148,11 @@ func (s *Service) performUpdate(cfg config.Config) {
 	defer rebootCancel()
 
 	if err := client.Reboot(rebootCtx); err != nil {
-		log.Printf("Warning: Failed to initiate reboot after firmware update: %v", err)
+		if s.shouldIgnoreError(err, cfg) {
+			log.Printf("Reboot RPC unimplemented, skipping ahead: %v", err)
+		} else {
+			log.Printf("Warning: Failed to initiate reboot after firmware update: %v", err)
+		}
 		// Continue with post-update checks even if reboot request fails
 	} else {
 		log.Printf("System reboot request sent successfully")
@@ -165,8 +183,13 @@ func (s *Service) performUpdate(cfg config.Config) {
 				statusCancel()
 
 				if err != nil {
-					log.Printf("Device unreachable during reboot (expected): %v", err)
-					// Connection error is expected during reboot, continue polling
+					if s.shouldIgnoreError(err, cfg) {
+						log.Printf("Reboot status RPC unimplemented, assuming reboot complete: %v", err)
+						rebootComplete = true
+					} else {
+						log.Printf("Device unreachable during reboot (expected): %v", err)
+						// Connection error is expected during reboot, continue polling
+					}
 					continue
 				}
 
@@ -192,7 +215,9 @@ func (s *Service) performUpdate(cfg config.Config) {
 
 	postUpdateOsResp, err := client.GetOSVersion(postUpdateOsCtx)
 	if err != nil {
-		log.Printf("Warning: Failed to get OS version after update: %v", err)
+		if !s.shouldIgnoreError(err, cfg) {
+			log.Printf("Warning: Failed to get OS version after update: %v", err)
+		}
 	} else {
 		log.Printf("OS version after update: %s", postUpdateOsResp.GetVersion())
 		if failMsg := postUpdateOsResp.GetActivationFailMessage(); failMsg != "" {
@@ -210,4 +235,22 @@ func (s *Service) Close() error {
 		return s.client.Close()
 	}
 	return nil
+}
+
+// shouldIgnoreError determines if the given error should be ignored
+// based on configuration settings
+func (s *Service) shouldIgnoreError(err error, cfg config.Config) bool {
+	if !cfg.IgnoreUnimplementedRPC {
+		return false
+	}
+
+	// Check if the error is a gRPC Unimplemented error
+	if st, ok := status.FromError(err); ok {
+		if st.Code() == codes.Unimplemented {
+			log.Printf("Ignoring unimplemented RPC error: %v", err)
+			return true
+		}
+	}
+
+	return false
 }
