@@ -31,15 +31,12 @@ func NewClient(target string) (*Client, error) {
 		return nil, fmt.Errorf("empty gRPC target specified")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Use the recommended gRPC connection options
+	// Use the recommended gRPC connection options with NewClient
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 
-	conn, err := grpc.DialContext(ctx, target, opts...)
+	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,4 +126,43 @@ func (c *Client) GetOSVersion(ctx context.Context) (*ospb.VerifyResponse, error)
 
 	log.Printf("OS version response: version=%v", verifyResp.GetVersion())
 	return verifyResp, nil
+}
+
+// Reboot initiates a system reboot via gNOI System service
+func (c *Client) Reboot(ctx context.Context) error {
+	if c.systemClient == nil {
+		return fmt.Errorf("system client not initialized")
+	}
+
+	log.Println("Initiating system COLD reboot via gNOI.System.Reboot")
+	_, err := c.systemClient.Reboot(ctx, &syspb.RebootRequest{
+		Method: syspb.RebootMethod_COLD,
+		Force:  true,
+		Message: "Rebooting to complete SONiC firmware update",
+	})
+
+	if err != nil {
+		log.Printf("Failed to initiate reboot: %v", err)
+		return err
+	}
+
+	log.Println("Reboot request successfully sent")
+	return nil
+}
+
+// GetRebootStatus checks the status of a reboot via gNOI System service
+func (c *Client) GetRebootStatus(ctx context.Context) (*syspb.RebootStatusResponse, error) {
+	if c.systemClient == nil {
+		return nil, fmt.Errorf("system client not initialized")
+	}
+
+	log.Println("Checking reboot status via gNOI.System.RebootStatus")
+	resp, err := c.systemClient.RebootStatus(ctx, &syspb.RebootStatusRequest{})
+	if err != nil {
+		log.Printf("Failed to get reboot status: %v", err)
+		return nil, err
+	}
+
+	log.Printf("Reboot status: active=%v", resp.GetActive())
+	return resp, nil
 }

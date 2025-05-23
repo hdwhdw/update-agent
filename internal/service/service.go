@@ -128,6 +128,64 @@ func (s *Service) performUpdate(cfg config.Config) {
 
 	log.Printf("Firmware update to version %s completed successfully", cfg.TargetVersion)
 
+	// Initiate a system reboot after successful firmware update
+	log.Printf("Initiating system reboot to complete firmware update process")
+	rebootCtx, rebootCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer rebootCancel()
+
+	if err := client.Reboot(rebootCtx); err != nil {
+		log.Printf("Warning: Failed to initiate reboot after firmware update: %v", err)
+		// Continue with post-update checks even if reboot request fails
+	} else {
+		log.Printf("System reboot request sent successfully")
+
+		// Wait for reboot to complete
+		log.Printf("Waiting for system to reboot...")		// Give the system some time to start rebooting
+		log.Printf("Waiting 10 seconds for system to begin reboot process...")
+		time.Sleep(10 * time.Second)
+
+		// Poll for reboot completion with a reasonable timeout
+		rebootWaitCtx, rebootWaitCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer rebootWaitCancel()// Poll the reboot status until either the reboot is complete or timeout occurs
+		rebootComplete := false
+		rebootPollTimer := time.NewTicker(10 * time.Second)
+		defer rebootPollTimer.Stop()
+
+		for !rebootComplete {
+			select {
+			case <-rebootWaitCtx.Done():
+				log.Printf("Timeout waiting for reboot to complete")
+				// In case of timeout, just proceed with the rest of the flow
+				rebootComplete = true
+			case <-rebootPollTimer.C:
+				log.Printf("Checking if device has completed reboot...")
+				// Try to check reboot status
+				statusCtx, statusCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				resp, err := client.GetRebootStatus(statusCtx)
+				statusCancel()
+
+				if err != nil {
+					log.Printf("Device unreachable during reboot (expected): %v", err)
+					// Connection error is expected during reboot, continue polling
+					continue
+				}
+
+				// If we can contact the device, check reboot status
+				if !resp.GetActive() {
+					log.Printf("System reboot completed successfully")
+					rebootComplete = true
+				} else {
+					log.Printf("Device reboot still in progress, continuing to wait...")
+				}
+			}
+		}
+
+		// Allow some additional time for all services to fully initialize
+		log.Printf("Waiting for system services to stabilize (60 seconds)...")
+		time.Sleep(60 * time.Second)
+		log.Printf("System stabilization period complete, proceeding with post-update verification")
+	}
+
 	// Get OS version after update via gNOI.OS.Verify to confirm successful update
 	postUpdateOsCtx, postUpdateOsCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer postUpdateOsCancel()

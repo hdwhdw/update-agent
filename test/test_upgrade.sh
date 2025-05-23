@@ -99,12 +99,12 @@ updateMlnxCpldFw: ${UPDATE_MLNX_CPLD}
 targetVersion: "${NEW_VERSION}"  # When this field is updated, it will trigger an update
 EOF
 
-echo "Waiting for update process (30 seconds)..."
+echo "Waiting for update process (180 seconds, including reboot and stabilization)..."
 echo "You can also run './test/monitor_logs.sh --wait' in another terminal to follow logs."
 
 # Show logs periodically during update if not in interactive mode
 if [ "$INTERACTIVE" = false ]; then
-  for _ in {1..6}; do
+  for _ in {1..36}; do
     echo "=== Agent logs at $(date) ==="
     docker logs --since=5s ${CONTAINER_NAME}
     echo "==========================="
@@ -117,7 +117,7 @@ if [ "$INTERACTIVE" = false ]; then
   echo "========================"
 else
   # In interactive mode, just wait for the update to complete
-  sleep 30
+  sleep 180
 fi
 
 # Signal that the test is complete

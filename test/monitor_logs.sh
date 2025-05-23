@@ -5,7 +5,7 @@
 
 WAIT_MODE=false
 CONTAINER_NAME="upgrade-agent-test"
-WAIT_TIMEOUT=120  # Default timeout 120 seconds
+WAIT_TIMEOUT=240  # Extended timeout to 240 seconds to accommodate longer reboot process
 SIGNAL_DIR="/tmp/upgrade-agent-signals"
 
 # Parse command line arguments
