@@ -6,6 +6,8 @@ set -e
 # Parse command line arguments
 INTERACTIVE=false
 IGNORE_UNIMPLEMENTED_RPC=false
+SSH_AUTH_TYPE="key"  # Default to key-based authentication
+SETUP_SSH_KEY=false  # Whether to run ssh-copy-id
 while [[ $# -gt 0 ]]; do
   case $1 in
     -i|--interactive)
@@ -16,12 +18,46 @@ while [[ $# -gt 0 ]]; do
       IGNORE_UNIMPLEMENTED_RPC=true
       shift
       ;;
+    --setup-ssh)
+      SETUP_SSH_KEY=true
+      shift
+      ;;
+    --ssh-password)
+      SSH_AUTH_TYPE="password"
+      # Check if next argument looks like a password (not starting with --)
+      if [[ $# -gt 1 && ! $2 == --* ]]; then
+        SSH_PASSWORD="$2"
+        shift 2
+      else
+        # Just set the auth type, password will be prompted later
+        shift
+      fi
+      ;;
+    --ssh-user)
+      SSH_USER="$2"
+      shift 2
+      ;;
+    --ssh-key)
+      SSH_KEY="$2"
+      shift 2
+      ;;
+    --ssh-host)
+      SERVER_IP="$2"
+      shift 2
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [-i|--interactive] [--ignore-unimplemented]"
+      echo "Usage: $0 [-i|--interactive] [--ignore-unimplemented] [--setup-ssh] [--ssh-password [password]] [--ssh-user username] [--ssh-key path/to/key] [--ssh-host hostname]"
       echo "Options:"
       echo "  -i, --interactive         Run in interactive mode with logs in terminal"
       echo "  --ignore-unimplemented    Treat unimplemented gRPC errors as success (for testing)"
+      echo "  --setup-ssh               Setup SSH keys using ssh-copy-id for passwordless login"
+      echo "                            (one-time setup, recommended for frequent testing)"
+      echo "  --ssh-password [password] Use password authentication for SSH (optional password,"
+      echo "                            will prompt if not provided). Not needed after --setup-ssh."
+      echo "  --ssh-user username       SSH username for remote server (default: current user)"
+      echo "  --ssh-key path/to/key     Path to SSH private key (default: ~/.ssh/id_rsa)"
+      echo "  --ssh-host hostname       Remote server hostname or IP (default: from GRPC_TARGET)"
       exit 1
       ;;
   esac
@@ -30,17 +66,112 @@ done
 # Configuration
 CONFIG_PATH="/tmp/config.yaml"
 CONFIG_MOUNT_PATH="/etc/upgrade-agent/config.yaml"
-GRPC_TARGET="10.250.0.101:8080"
+GRPC_TARGET="10.250.0.101:50052"
 FIRMWARE_SOURCE="/tmp/sonic.bin"
 FIRMWARE_MOUNT_PATH="/firmware/sonic.bin"
 UPDATE_MLNX_CPLD="true"
 INITIAL_VERSION="1.0.0"
 NEW_VERSION="1.1.0"
 CONTAINER_NAME="upgrade-agent-test"
+SERVER_CONTAINER_NAME="upgrade-server-test"
+# Extract port from GRPC_TARGET to ensure consistency
+SERVER_PORT="$(echo $GRPC_TARGET | cut -d':' -f2)"
+SERVER_IP="$(echo $GRPC_TARGET | cut -d':' -f1)"
+SSH_USER="${SSH_USER:-$(whoami)}"  # Default to current user if not set
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}"  # Default SSH key location
+SSH_OPTIONS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+# Helper function for SSH commands
+run_ssh() {
+  local cmd="$1"
+  if [ "$SSH_AUTH_TYPE" = "password" ]; then
+    # Check if sshpass is installed
+    if ! command -v sshpass >/dev/null 2>&1; then
+      echo "Error: sshpass is not installed. Please install it for password authentication."
+      echo "   On Ubuntu/Debian: sudo apt-get install sshpass"
+      echo "   On RHEL/CentOS: sudo yum install sshpass"
+      echo "   On macOS: brew install hudochenkov/sshpass/sshpass"
+      exit 1
+    fi
+
+    # Prompt for password only once during the script execution
+    if [ -z "${SSH_PASSWORD}" ]; then
+      read -sp "Enter SSH password for ${SSH_USER}@${SERVER_IP} (will be stored for this session): " SSH_PASSWORD
+      echo ""
+      # Export password so it's available to all functions in the script
+      export SSH_PASSWORD
+    fi
+
+    # Password authentication with stored password
+    sshpass -p "$SSH_PASSWORD" ssh ${SSH_OPTIONS} ${SSH_USER}@${SERVER_IP} "$cmd"
+  else
+    # Key-based authentication (default)
+    ssh ${SSH_OPTIONS} -i "${SSH_KEY}" ${SSH_USER}@${SERVER_IP} "$cmd"
+  fi
+}
+
+# Helper function for SCP
+run_scp() {
+  local src="$1"
+  local dest="$2"
+  if [ "$SSH_AUTH_TYPE" = "password" ]; then
+    # Password already captured by run_ssh if it was called first
+    # If not, prompt for it now (only happens if run_scp is called before run_ssh)
+    if [ -z "${SSH_PASSWORD}" ]; then
+      read -sp "Enter SSH password for ${SSH_USER}@${SERVER_IP} (will be stored for this session): " SSH_PASSWORD
+      echo ""
+      export SSH_PASSWORD
+    fi
+
+    # Password authentication with stored password
+    sshpass -p "$SSH_PASSWORD" scp ${SSH_OPTIONS} "$src" "${SSH_USER}@${SERVER_IP}:$dest"
+  else
+    # Key-based authentication
+    scp ${SSH_OPTIONS} -i "${SSH_KEY}" "$src" "${SSH_USER}@${SERVER_IP}:$dest"
+  fi
+}
 
 # Ensure the firmware directory exists
 mkdir -p "$(dirname "${FIRMWARE_SOURCE}")"
 touch ${FIRMWARE_SOURCE}
+
+# Handle SSH key setup if requested
+if [ "$SETUP_SSH_KEY" = true ]; then
+  echo "Setting up SSH key authentication with ${SERVER_IP}..."
+
+  # Check if key exists, generate if not
+  if [ ! -f "${SSH_KEY}" ] || [ ! -f "${SSH_KEY}.pub" ]; then
+    echo "SSH key ${SSH_KEY} does not exist. Generating new key..."
+    ssh-keygen -t rsa -b 4096 -f "${SSH_KEY}" -N ""
+  fi
+
+  # Use ssh-copy-id to copy the key
+  if [ "$SSH_AUTH_TYPE" = "password" ]; then
+    # If user provided password via command line
+    if [ -n "${SSH_PASSWORD}" ]; then
+      # Check if sshpass is installed
+      if ! command -v sshpass >/dev/null 2>&1; then
+        echo "Error: sshpass is not installed. Please install it for password-based ssh-copy-id."
+        echo "   On Ubuntu/Debian: sudo apt-get install sshpass"
+        echo "   On RHEL/CentOS: sudo yum install sshpass"
+        exit 1
+      fi
+      sshpass -p "${SSH_PASSWORD}" ssh-copy-id -i "${SSH_KEY}.pub" ${SSH_OPTIONS} "${SSH_USER}@${SERVER_IP}"
+    else
+      # Interactive password prompt
+      echo "Please enter the password for ${SSH_USER}@${SERVER_IP} when prompted."
+      ssh-copy-id -i "${SSH_KEY}.pub" ${SSH_OPTIONS} "${SSH_USER}@${SERVER_IP}"
+    fi
+  else
+    # Just run ssh-copy-id (will prompt for password)
+    echo "Please enter the password for ${SSH_USER}@${SERVER_IP} when prompted."
+    ssh-copy-id -i "${SSH_KEY}.pub" ${SSH_OPTIONS} "${SSH_USER}@${SERVER_IP}"
+  fi
+
+  # Switch to key-based auth now that we've set it up
+  SSH_AUTH_TYPE="key"
+  echo "SSH key setup complete. Now using key-based authentication."
+fi
 
 echo "Creating initial config file..."
 cat > ${CONFIG_PATH} << EOF
@@ -51,8 +182,44 @@ targetVersion: "${INITIAL_VERSION}"  # When this field is updated, it will trigg
 ignoreUnimplementedRPC: ${IGNORE_UNIMPLEMENTED_RPC}
 EOF
 
-echo "Building the Docker container..."
+echo "Building the Docker containers..."
 docker build -t upgrade-agent:latest .
+docker build -t upgrade-server:latest -f Dockerfile.server .
+
+echo "Copying the server image to remote host ${SERVER_IP}..."
+# Save the server Docker image to a file
+docker save upgrade-server:latest > /tmp/upgrade-server-image.tar
+
+# Copy the Docker image to the remote server
+run_scp "/tmp/upgrade-server-image.tar" "/tmp/"
+
+# SSH to remote server, load the image, and start the container
+echo "Starting upgrade server container on remote host ${SERVER_IP}..."
+run_ssh "
+# Load the Docker image
+docker load < /tmp/upgrade-server-image.tar
+
+# Remove any existing container with the same name
+docker rm -f upgrade-server-test >/dev/null 2>&1 || true
+
+# Start the server container
+docker run --name upgrade-server-test \\
+  --network=host \\
+  --privileged \\
+  --detach \\
+  upgrade-server:latest --port ${SERVER_PORT}
+
+# Display initial logs
+echo \"Server container started on \$(hostname)\"
+docker logs upgrade-server-test
+"
+
+echo "Waiting for server to initialize (5 seconds)..."
+sleep 5
+
+echo "=== Initial server logs on ${SERVER_IP} ==="
+run_ssh "docker logs ${SERVER_CONTAINER_NAME}"
+echo "==========================="
 
 echo "Starting upgrade agent container with initial version ${INITIAL_VERSION}..."
 
@@ -133,9 +300,19 @@ fi
 # Signal that the test is complete
 echo "${CONTAINER_NAME}" > "${SIGNAL_DIR}/test_complete"
 
-echo "Stopping container..."
+echo "Stopping local container..."
 docker stop ${CONTAINER_NAME}
 docker rm ${CONTAINER_NAME}
+
+echo "Stopping and removing server container on remote host ${SERVER_IP}..."
+run_ssh "
+docker stop ${SERVER_CONTAINER_NAME}
+docker rm ${SERVER_CONTAINER_NAME}
+rm -f /tmp/upgrade-server-image.tar
+"
+
+# Clean up local temporary files
+rm -f /tmp/upgrade-server-image.tar
 
 if [ "$INTERACTIVE" = false ]; then
   echo "Full logs saved to /tmp/agent-output.log"
