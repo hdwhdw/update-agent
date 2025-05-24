@@ -276,15 +276,61 @@ targetVersion: "${NEW_VERSION}"  # When this field is updated, it will trigger a
 ignoreUnimplementedRPC: ${IGNORE_UNIMPLEMENTED_RPC}
 EOF
 
-echo "Waiting for update process (300 seconds, including reboot and stabilization)..."
+echo "Waiting for update process to complete (max 300 seconds)..."
 echo "You can also run './test/monitor_logs.sh --wait' in another terminal to follow logs."
 
-# Show logs periodically during update if not in interactive mode
+# Set a maximum timeout (in seconds)
+MAX_TIMEOUT=300
+START_TIME=$(date +%s)
+
+# Success indicator phrases to look for in logs
+COMPLETE_INDICATORS=(
+  "Firmware update to version ${NEW_VERSION} completed successfully"
+  "System reboot completed successfully"
+  "System stabilization period complete"
+  "OS version after update"
+)
+
+# Function to check if upgrade is complete
+check_upgrade_complete() {
+  # Get the latest logs
+  local logs
+  logs=$(docker logs ${CONTAINER_NAME} 2>&1)
+
+  # Check for any of the success indicators
+  for indicator in "${COMPLETE_INDICATORS[@]}"; do
+    if echo "$logs" | grep -q "$indicator"; then
+      return 0  # Found a completion indicator
+    fi
+  done
+
+  return 1  # No completion indicator found
+}
+
+# Monitor logs and check for upgrade completion
 if [ "$INTERACTIVE" = false ]; then
-  for _ in {1..60}; do
-    echo "=== Agent logs at $(date) ==="
+  # Non-interactive mode: poll logs and check for completion
+  while true; do
+    CURRENT_TIME=$(date +%s)
+    ELAPSED_TIME=$((CURRENT_TIME - START_TIME))
+
+    # Exit if we've exceeded the maximum timeout
+    if [ $ELAPSED_TIME -ge $MAX_TIMEOUT ]; then
+      echo "Maximum wait time reached ($MAX_TIMEOUT seconds). Proceeding..."
+      break
+    fi
+
+    # Display recent logs
+    echo "=== Agent logs at $(date) [${ELAPSED_TIME}s elapsed] ==="
     docker logs --since=5s ${CONTAINER_NAME}
     echo "==========================="
+
+    # Check if upgrade is complete
+    if check_upgrade_complete; then
+      echo "Upgrade completion detected! Proceeding..."
+      break
+    fi
+
     sleep 5
   done
 
@@ -293,8 +339,26 @@ if [ "$INTERACTIVE" = false ]; then
   docker logs --tail 20 ${CONTAINER_NAME}
   echo "========================"
 else
-  # In interactive mode, just wait for the update to complete
-  sleep 300
+  # Interactive mode: monitor logs and check for completion
+  echo "Interactive mode: checking for upgrade completion (max $MAX_TIMEOUT seconds)..."
+  while true; do
+    CURRENT_TIME=$(date +%s)
+    ELAPSED_TIME=$((CURRENT_TIME - START_TIME))
+
+    # Exit if we've exceeded the maximum timeout
+    if [ $ELAPSED_TIME -ge $MAX_TIMEOUT ]; then
+      echo "Maximum wait time reached ($MAX_TIMEOUT seconds). Proceeding..."
+      break
+    fi
+
+    # Check if upgrade is complete
+    if check_upgrade_complete; then
+      echo "Upgrade completion detected! Proceeding..."
+      break
+    fi
+
+    sleep 5
+  done
 fi
 
 # Signal that the test is complete
