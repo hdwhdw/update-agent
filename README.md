@@ -49,6 +49,37 @@ docker run --network=host \
   upgrade-agent:latest
 ```
 
+## Upgrade Server
+
+The upgrade-server provides gRPC services that implement:
+1. gNOI System service
+2. SonicUpgradeService for firmware updates
+
+### Building the Server
+
+```bash
+go build -o upgrade-server ./cmd/upgrade-server
+```
+
+### Running the Server
+
+```bash
+./upgrade-server --port 8080
+```
+
+### Docker for Server
+
+You can also run the server using Docker:
+
+```bash
+docker build -f Dockerfile.server -t upgrade-server:latest .
+docker run -p 8080:8080 upgrade-server:latest
+```
+
+## Project Structure
+
+See [Architecture Documentation](docs/architecture.md) for details on the project structure and component design.
+
 ## Volumes
 
 To mount firmware files from the host to the container:
