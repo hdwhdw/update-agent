@@ -9,9 +9,11 @@ import (
 	"syscall"
 
 	gnoisonic "upgrade-agent/gnoi_sonic"
+	"upgrade-agent/internal/osservice"
 	"upgrade-agent/internal/sonicservice"
 	"upgrade-agent/internal/systemservice"
 
+	gnoios "github.com/openconfig/gnoi/os"
 	"github.com/openconfig/gnoi/system"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -22,6 +24,7 @@ type Server struct {
 	grpcServer      *grpc.Server
 	sonicService    *sonicservice.Service
 	systemService   *systemservice.Service
+	osService       *osservice.OSService
 	listener        net.Listener
 }
 
@@ -35,10 +38,12 @@ func NewServer(port string) (*Server, error) {
 	grpcServer := grpc.NewServer()
 	sonicSvc := sonicservice.NewService()
 	systemSvc := systemservice.NewService()
+	osSvc := osservice.NewOSService()
 
 	// Register services
 	gnoisonic.RegisterSonicUpgradeServiceServer(grpcServer, sonicSvc)
 	system.RegisterSystemServer(grpcServer, systemSvc)
+	gnoios.RegisterOSServer(grpcServer, osSvc)
 
 	// Register reflection service on gRPC server
 	reflection.Register(grpcServer)
@@ -47,6 +52,7 @@ func NewServer(port string) (*Server, error) {
 		grpcServer:     grpcServer,
 		sonicService:   sonicSvc,
 		systemService:  systemSvc,
+		osService:      osSvc,
 		listener:       lis,
 	}, nil
 }

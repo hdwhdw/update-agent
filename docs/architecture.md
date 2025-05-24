@@ -27,6 +27,8 @@ upgrade-agent/
 │   │   └── client.go          # Client implementation
 │   ├── grpcserver/            # gRPC server implementation
 │   │   └── server.go          # Server implementation
+│   ├── osservice/             # gNOI OS service implementation
+│   │   └── os.go              # OSService implementation
 │   ├── sonicservice/          # SonicUpgradeService implementation
 │   │   └── sonic.go           # SonicUpgradeService implementation
 │   └── systemservice/         # gNOI System service implementation
@@ -63,6 +65,13 @@ The agent package (`internal/agent/agent.go`) implements the core logic of the u
 The systemservice package (`internal/systemservice/system.go`) implements the gNOI System service, which provides basic system functionality including:
 
 - Time retrieval (System.Time RPC)
+
+### OS Service
+
+The osservice package (`internal/osservice/os.go`) implements the gNOI OS service, which provides:
+
+- OS version information (OS.Verify RPC)
+- Extracts SONiC OS version from boot image path in `/proc/cmdline`
 
 ### Sonic Upgrade Service
 

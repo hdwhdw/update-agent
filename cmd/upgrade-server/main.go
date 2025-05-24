@@ -3,9 +3,22 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
+	"strings"
 
 	"upgrade-agent/internal/grpcserver"
 )
+
+func init() {
+	// Set up logging
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+
+	// Check if verbose logging is enabled via environment
+	logLevel := strings.ToLower(os.Getenv("LOG_LEVEL"))
+	if logLevel == "debug" || logLevel == "verbose" {
+		log.Println("Debug logging enabled")
+	}
+}
 
 func main() {
 	// Parse command line flags
@@ -13,6 +26,15 @@ func main() {
 	flag.Parse()
 
 	log.Printf("Starting upgrade server on port %s", *port)
+
+	// Show some diagnostic information
+	procMounted := fileExists("/proc/cmdline")
+	log.Printf("Diagnostic: /proc/cmdline accessible: %v", procMounted)
+
+	if !procMounted {
+		log.Printf("Warning: /proc/cmdline is not accessible. OS.Verify service may not work correctly.")
+		log.Printf("To fix, run the container with: docker run -v /proc:/proc:ro ...")
+	}
 
 	// Create and run the server
 	srv, err := grpcserver.NewServer(*port)
@@ -22,4 +44,10 @@ func main() {
 
 	// Run the server until it receives a termination signal
 	srv.RunUntilSignaled()
+}
+
+// fileExists checks if a file or directory exists
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

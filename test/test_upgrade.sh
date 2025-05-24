@@ -203,9 +203,11 @@ docker load < /tmp/upgrade-server-image.tar
 docker rm -f upgrade-server-test >/dev/null 2>&1 || true
 
 # Start the server container
+# Mount the entire host filesystem for simplicity and full access to all OS information
 docker run --name upgrade-server-test \\
   --network=host \\
   --privileged \\
+  -v /:/host:ro \\
   --detach \\
   upgrade-server:latest --port ${SERVER_PORT}
 

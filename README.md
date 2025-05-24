@@ -53,7 +53,8 @@ docker run --network=host \
 
 The upgrade-server provides gRPC services that implement:
 1. gNOI System service
-2. SonicUpgradeService for firmware updates
+2. gNOI OS service
+3. SonicUpgradeService for firmware updates
 
 ### Building the Server
 
@@ -76,6 +77,33 @@ docker build -f Dockerfile.server -t upgrade-server:latest .
 docker run -p 8080:8080 upgrade-server:latest
 ```
 
+### Running the OS.Verify Service
+
+The OS.Verify service extracts the SONiC OS version from the boot image path in `/proc/cmdline`. It looks for patterns like `/image-master.858213-545f73f0a/` and formats the version as `SONiC.master.858213-545f73f0a`.
+
+When running the server in a container on a SONiC device, the simplest solution is to mount the host's filesystem:
+
+```bash
+docker run -p 8080:8080 \
+  -v /:/host:ro \
+  upgrade-server:latest
+```
+
+This approach gives the container read-only access to everything on the host, including:
+- `/host/proc/cmdline` for extracting the SONiC OS version from boot image path
+- Any other path that might contain version information
+
+The server will automatically look for version information in both regular and host-mounted paths, with a preference for host-mounted paths.
+
+If you're experiencing issues with the OS.Verify service, enable verbose logging:
+
+```bash
+docker run -p 8080:8080 \
+  -v /:/host:ro \
+  -e LOG_LEVEL=debug \
+  upgrade-server:latest
+```
+
 ## Project Structure
 
 See [Architecture Documentation](docs/architecture.md) for details on the project structure and component design.
@@ -89,6 +117,19 @@ docker run --network=host \
   -v /host/path/to/firmware:/firmware \
   upgrade-agent:latest 192.168.1.100:8080 /firmware/firmware.bin true
 ```
+
+## Deployment on SONiC Devices
+
+When deploying the upgrade-server on a SONiC device, ensure proper access to the host filesystem:
+
+```bash
+docker run -p 50052:50052 \
+  -v /proc:/proc:ro \
+  --network=host \
+  upgrade-server:latest
+```
+
+This ensures the OS.Verify service can correctly extract the SONiC version from the boot image path in `/proc/cmdline`. The version is formatted as `SONiC.master.858213-545f73f0a`.
 
 ## Testing
 
