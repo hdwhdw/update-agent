@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"upgrade-agent/internal/agent"
 	"upgrade-agent/internal/config"
-	"upgrade-agent/internal/service"
 )
 
 const (
@@ -27,8 +27,8 @@ func main() {
 		log.Fatalf("Failed to create config directory: %v", err)
 	}
 
-	// Create the service
-	svc := service.NewService()
+	// Create the agent
+	svc := agent.NewAgent()
 	defer svc.Close()
 
 	// Setup config manager with callback

@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"upgrade-agent/internal/agent"
 	"upgrade-agent/internal/config"
-	"upgrade-agent/internal/service"
 
 	"gopkg.in/yaml.v3"
 )
@@ -35,8 +35,8 @@ func main() {
 		log.Fatalf("Failed to create config directory: %v", err)
 	}
 
-	// Create the service
-	svc := service.NewService()
+	// Create the agent
+	svc := agent.NewAgent()
 	defer svc.Close()
 
 	// Setup config manager with callback

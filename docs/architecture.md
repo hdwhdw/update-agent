@@ -10,43 +10,73 @@ The Upgrade Agent is a gRPC-based system for managing firmware updates on SONiC 
 upgrade-agent/
 ├── cmd/                       # Command-line applications
 │   ├── test-agent/            # Test client for the upgrade agent
+│   │   └── main.go            # Entry point for the test agent
 │   ├── upgrade-agent/         # The upgrade agent client
+│   │   └── main.go            # Entry point for the upgrade agent
 │   └── upgrade-server/        # The upgrade server
+│       └── main.go            # Entry point for the upgrade server
 ├── gnoi_sonic/                # Generated gRPC code for the Sonic service
+│   ├── sonic_upgrade_grpc.pb.go # Generated gRPC bindings
+│   └── sonic_upgrade.pb.go    # Generated protocol buffer code
 ├── internal/                  # Internal packages
+│   ├── agent/                 # The core upgrade agent
+│   │   └── agent.go           # Agent implementation
 │   ├── config/                # Configuration handling
+│   │   └── config.go          # Configuration manager
 │   ├── grpcclient/            # gRPC client implementation
-│   ├── server/                # Server implementation
-│   ├── service/               # Common service functionality
+│   │   └── client.go          # Client implementation
+│   ├── grpcserver/            # gRPC server implementation
+│   │   └── server.go          # Server implementation
 │   ├── sonicservice/          # SonicUpgradeService implementation
+│   │   └── sonic.go           # SonicUpgradeService implementation
 │   └── systemservice/         # gNOI System service implementation
+│       └── system.go          # SystemService implementation
 ├── proto/                     # Protocol buffer definitions
 │   └── sonic_upgrade.proto    # SonicUpgradeService definition
 └── test/                      # Testing scripts and utilities
+    ├── monitor_logs.sh        # Script for monitoring logs
+    └── test_upgrade.sh        # Test script for the upgrade process
 ```
 
 ## Components
 
-### Server
+### gRPC Server
 
-The server package (`internal/server`) provides a generic gRPC server that hosts both the gNOI System service and the SonicUpgradeService. It handles:
+The grpcserver package (`internal/grpcserver/server.go`) provides a generic gRPC server that hosts both the gNOI System service and the SonicUpgradeService. It handles:
 
 - Server initialization
 - Service registration
 - Graceful shutdown
 - Signal handling
 
+### Agent
+
+The agent package (`internal/agent/agent.go`) implements the core logic of the upgrade agent, which includes:
+
+- Managing firmware updates
+- Communicating with the gRPC server
+- Handling configuration updates
+- Processing reboot and verification workflows
+
 ### System Service
 
-The systemservice package (`internal/systemservice`) implements the gNOI System service, which provides basic system functionality including:
+The systemservice package (`internal/systemservice/system.go`) implements the gNOI System service, which provides basic system functionality including:
 
 - Time retrieval (System.Time RPC)
 
 ### Sonic Upgrade Service
 
-The sonicservice package (`internal/sonicservice`) implements the SonicUpgradeService, which provides:
+The sonicservice package (`internal/sonicservice/sonic.go`) implements the SonicUpgradeService, which provides:
 
 - Firmware update functionality (UpdateFirmware RPC)
+
+### gRPC Client
+
+The grpcclient package (`internal/grpcclient/client.go`) provides a client for interacting with the gRPC server. It includes:
+
+- Establishing connections to the gRPC server
+- Methods for invoking RPCs on the SonicUpgradeService and gNOI services
+- Handling of streaming responses for the firmware update process
 
 ## Communication Flow
 
@@ -76,7 +106,7 @@ To add new services:
 1. Define the service in a Protocol Buffer file
 2. Generate the Go code using the `protoc` compiler
 3. Create a new package under `internal/` to implement the service
-4. Update the `internal/server/server.go` file to register the new service
+4. Update the `internal/grpcserver/server.go` file to register the new service
 
 ## Docker Support
 

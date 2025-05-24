@@ -4,7 +4,7 @@ import (
 	"flag"
 	"log"
 
-	"upgrade-agent/internal/server"
+	"upgrade-agent/internal/grpcserver"
 )
 
 func main() {
@@ -15,7 +15,7 @@ func main() {
 	log.Printf("Starting upgrade server on port %s", *port)
 
 	// Create and run the server
-	srv, err := server.NewServer(*port)
+	srv, err := grpcserver.NewServer(*port)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
