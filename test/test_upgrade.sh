@@ -207,7 +207,9 @@ docker rm -f upgrade-server-test >/dev/null 2>&1 || true
 docker run --name upgrade-server-test \\
   --network=host \\
   --privileged \\
-  -v /:/host:ro \\
+  --restart=always \\
+  --cap-add=SYS_BOOT \\
+  -v /:/host \\
   --detach \\
   upgrade-server:latest --port ${SERVER_PORT}
 

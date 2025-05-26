@@ -20,8 +20,8 @@ LABEL maintainer="Your Name <your.email@example.com>"
 LABEL version="1.0.0"
 LABEL description="gRPC server for SonicUpgradeService"
 
-# Install required packages (including procps for procfs access tools)
-RUN apk --no-cache add ca-certificates procps
+# Install required packages (including procps for procfs access tools and util-linux for nsenter)
+RUN apk --no-cache add ca-certificates procps util-linux
 
 WORKDIR /app
 
@@ -31,11 +31,8 @@ COPY --from=builder /app/upgrade-server .
 # Create directories for mounting host volumes if needed
 RUN mkdir -p /etc/sonic /host/etc/sonic
 
-# Create a non-root user to run the application
-RUN adduser -D -h /app appuser && \
-    chown -R appuser:appuser /app
-
-USER appuser
+# Don't use a non-root user since we need privileges for reboot
+# USER appuser is removed to allow root actions
 
 # Set environment variables to ensure proper logging
 ENV GO_LOG=stderr
