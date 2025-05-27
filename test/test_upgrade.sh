@@ -4,12 +4,12 @@
 set -e
 
 # Parse command line arguments
-IGNORE_UNIMPLEMENTED_RPC=false
+IGNORE_UNIMPLEMENTED_RPC=true  # Default is true as requested
 FAKE_REBOOT=true
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --ignore-unimplemented)
-      IGNORE_UNIMPLEMENTED_RPC=true
+    --no-ignore-unimplemented)
+      IGNORE_UNIMPLEMENTED_RPC=false
       shift
       ;;
     --no-fake-reboot)
@@ -26,11 +26,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--ignore-unimplemented] [--no-fake-reboot] [--ssh-user username] [--ssh-host hostname]"
+      echo "Usage: $0 [--no-ignore-unimplemented] [--no-fake-reboot] [--ssh-user username] [--ssh-host hostname]"
       echo "Options:"
-      echo "  --ignore-unimplemented    Treat unimplemented gRPC errors as success (for testing)"
+      echo "  --no-ignore-unimplemented Disable treating unimplemented gRPC errors as success"
       echo "  --no-fake-reboot          Disable fake reboot mode (actually reboot the system)"
-      echo "  --ssh-user username       SSH username for remote server (default: current user)"
+      echo "  --ssh-user username       SSH username for remote server (default: admin)"
       echo "  --ssh-host hostname       Remote server hostname or IP (default: from GRPC_TARGET)"
       exit 1
       ;;
@@ -51,7 +51,7 @@ SERVER_CONTAINER_NAME="upgrade-server-test"
 # Extract port from GRPC_TARGET to ensure consistency
 SERVER_PORT="$(echo $GRPC_TARGET | cut -d':' -f2)"
 SERVER_IP="$(echo $GRPC_TARGET | cut -d':' -f1)"
-SSH_USER="${SSH_USER:-$(whoami)}"  # Default to current user if not set
+SSH_USER="${SSH_USER:-admin}"  # Default to admin user if not set
 SSH_KEY="$HOME/.ssh/id_rsa"  # Default SSH key location
 SSH_OPTIONS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
