@@ -148,7 +148,23 @@ SIGNAL_DIR="/tmp/upgrade-agent-signals"
 mkdir -p "${SIGNAL_DIR}"
 
 # Remove any old signal files
-rm -f "${SIGNAL_DIR}/container_ready" "${SIGNAL_DIR}/test_complete"
+rm -f "${SIGNAL_DIR}/container_ready" "${SIGNAL_DIR}/test_complete" "${SIGNAL_DIR}/server_ready"
+
+# Set up server log monitoring in background
+echo "${SERVER_CONTAINER_NAME}" > "${SIGNAL_DIR}/server_ready"
+echo "Starting server log monitoring..."
+{
+  # Loop to continuously fetch server logs
+  while true; do
+    if [ -f "${SIGNAL_DIR}/test_complete" ]; then
+      break
+    fi
+    run_ssh "docker logs --since=5s ${SERVER_CONTAINER_NAME} 2>&1" >> /tmp/server-output.log
+    sleep 5
+  done
+} &
+SERVER_LOGS_PID=$!
+echo "Server logs will be collected to /tmp/server-output.log"
 
 # Run in background mode with logs redirected to file
 docker run --name ${CONTAINER_NAME} \
@@ -160,7 +176,9 @@ AGENT_CONTAINER_PID=$!
 echo "Agent container started with PID: ${AGENT_CONTAINER_PID}"
 echo "You can view logs in real-time with:"
 echo "  - tail -f /tmp/agent-output.log"
+echo "  - tail -f /tmp/server-output.log"
 echo "  - ./test/monitor_logs.sh ${CONTAINER_NAME}"
+echo "  - ./test/monitor_logs.sh --server (for server logs)"
 
 # Create a signal file that the monitor script can check for
 # and write the container name to it
@@ -186,7 +204,8 @@ ignoreUnimplementedRPC: ${IGNORE_UNIMPLEMENTED_RPC}
 EOF
 
 echo "Waiting for update process to complete (max 300 seconds)..."
-echo "You can also run './test/monitor_logs.sh --wait' in another terminal to follow logs."
+echo "You can also run './test/monitor_logs.sh --wait' in another terminal to follow agent logs."
+echo "You can also run 'tail -f /tmp/server-output.log' in another terminal to follow server logs."
 
 # Set a maximum timeout (in seconds)
 MAX_TIMEOUT=300
@@ -232,6 +251,11 @@ while true; do
   docker logs --since=5s ${CONTAINER_NAME}
   echo "==========================="
 
+  # Display recent server logs
+  echo "=== Server logs at $(date) [${ELAPSED_TIME}s elapsed] ==="
+  run_ssh "docker logs --since=5s ${SERVER_CONTAINER_NAME} 2>&1" || echo "Could not retrieve server logs"
+  echo "==========================="
+
   # Check if upgrade is complete
   if check_upgrade_complete; then
     echo "Upgrade completion detected! Proceeding..."
@@ -246,12 +270,22 @@ echo "=== Final agent logs ==="
 docker logs --tail 20 ${CONTAINER_NAME}
 echo "========================"
 
+echo "=== Final server logs ==="
+run_ssh "docker logs --tail 20 ${SERVER_CONTAINER_NAME} 2>&1" || echo "Could not retrieve final server logs"
+echo "========================"
+
 # Signal that the test is complete
 echo "${CONTAINER_NAME}" > "${SIGNAL_DIR}/test_complete"
 
 echo "Stopping local container..."
 docker stop ${CONTAINER_NAME}
 docker rm ${CONTAINER_NAME}
+
+# Kill the server log monitoring process
+if [ -n "${SERVER_LOGS_PID}" ]; then
+  echo "Stopping server log monitoring (PID: ${SERVER_LOGS_PID})..."
+  kill ${SERVER_LOGS_PID} 2>/dev/null || true
+fi
 
 echo "Stopping and removing server container on remote host ${SERVER_IP}..."
 run_ssh "
@@ -263,5 +297,7 @@ rm -f /tmp/upgrade-server-image.tar
 # Clean up local temporary files
 rm -f /tmp/upgrade-server-image.tar
 
-echo "Full logs saved to /tmp/agent-output.log"
+echo "Full logs saved to:"
+echo "- Agent logs: /tmp/agent-output.log"
+echo "- Server logs: /tmp/server-output.log"
 echo "Done."
