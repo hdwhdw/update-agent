@@ -66,7 +66,7 @@ done
 # Configuration
 CONFIG_PATH="/tmp/config.yaml"
 CONFIG_MOUNT_PATH="/etc/upgrade-agent/config.yaml"
-GRPC_TARGET="10.250.0.101:50052"
+GRPC_TARGET="10.250.0.101:50060"
 FIRMWARE_SOURCE="/tmp/sonic.bin"
 FIRMWARE_MOUNT_PATH="/firmware/sonic.bin"
 UPDATE_MLNX_CPLD="true"
