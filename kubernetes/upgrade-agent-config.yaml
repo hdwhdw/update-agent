@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: upgrade-agent-config
+  namespace: default
+data:
+  config.yaml: |
+    grpcTarget: "upgrade-server:50060"
+    firmwareSource: "/firmware/sonic.bin"
+    updateMlnxCpldFw: true
+    targetVersion: "1.0.0"
+    ignoreUnimplementedRPC: false

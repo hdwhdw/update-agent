@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: upgrade-server
+  namespace: default
+  labels:
+    app: upgrade-server
+spec:
+  selector:
+    matchLabels:
+      app: upgrade-server
+  template:
+    metadata:
+      labels:
+        app: upgrade-server
+    spec:
+      hostNetwork: true  # Equivalent to --network=host
+      nodeSelector:
+        role: switch  # This will deploy the daemon only on nodes with label role=switch
+      containers:
+      - name: upgrade-server
+        image: upgrade-server:latest
+        imagePullPolicy: IfNotPresent
+        args: ["--port", "50060"]  # Using the default port from test_upgrade.sh
+        securityContext:
+          privileged: true  # Equivalent to --privileged
+          capabilities:
+            add: ["SYS_BOOT"]  # Equivalent to --cap-add=SYS_BOOT
+        volumeMounts:
+        - name: host-fs
+          mountPath: /host
+          readOnly: true  # For safety, mount as read-only initially
+      volumes:
+      - name: host-fs
+        hostPath:
+          path: /
+          type: Directory
+      restartPolicy: Always
