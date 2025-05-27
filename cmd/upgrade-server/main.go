@@ -23,9 +23,13 @@ func init() {
 func main() {
 	// Parse command line flags
 	port := flag.String("port", "8080", "The server port")
+	fakeReboot := flag.Bool("fake-reboot", false, "If enabled, the server will fake reboots instead of actually rebooting")
 	flag.Parse()
 
 	log.Printf("Starting upgrade server on port %s", *port)
+	if *fakeReboot {
+		log.Printf("Fake reboot mode enabled - the server will not actually reboot the system")
+	}
 
 	// Show some diagnostic information
 	procMounted := fileExists("/proc/cmdline")
@@ -37,7 +41,7 @@ func main() {
 	}
 
 	// Create and run the server
-	srv, err := grpcserver.NewServer(*port)
+	srv, err := grpcserver.NewServer(*port, *fakeReboot)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}

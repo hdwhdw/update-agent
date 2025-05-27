@@ -5,10 +5,15 @@ set -e
 
 # Parse command line arguments
 IGNORE_UNIMPLEMENTED_RPC=false
+FAKE_REBOOT=true
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ignore-unimplemented)
       IGNORE_UNIMPLEMENTED_RPC=true
+      shift
+      ;;
+    --no-fake-reboot)
+      FAKE_REBOOT=false
       shift
       ;;
     --ssh-user)
@@ -21,9 +26,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--ignore-unimplemented] [--ssh-user username] [--ssh-host hostname]"
+      echo "Usage: $0 [--ignore-unimplemented] [--no-fake-reboot] [--ssh-user username] [--ssh-host hostname]"
       echo "Options:"
       echo "  --ignore-unimplemented    Treat unimplemented gRPC errors as success (for testing)"
+      echo "  --no-fake-reboot          Disable fake reboot mode (actually reboot the system)"
       echo "  --ssh-user username       SSH username for remote server (default: current user)"
       echo "  --ssh-host hostname       Remote server hostname or IP (default: from GRPC_TARGET)"
       exit 1
@@ -121,7 +127,7 @@ docker run --name upgrade-server-test \\
   --cap-add=SYS_BOOT \\
   -v /:/host \\
   --detach \\
-  upgrade-server:latest --port ${SERVER_PORT}
+  upgrade-server:latest --port ${SERVER_PORT} $([ "$FAKE_REBOOT" = true ] && echo "--fake-reboot")
 
 # Display initial logs
 echo \"Server container started on \$(hostname)\"

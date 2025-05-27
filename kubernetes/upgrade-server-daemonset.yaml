@@ -21,7 +21,7 @@ spec:
       - name: upgrade-server
         image: upgrade-server:latest
         imagePullPolicy: IfNotPresent
-        args: ["--port", "50060"]  # Using the default port from test_upgrade.sh
+        args: ["--port", "50060", "--fake-reboot"]  # Enable fake reboot by default for testing
         securityContext:
           privileged: true  # Equivalent to --privileged
           capabilities:

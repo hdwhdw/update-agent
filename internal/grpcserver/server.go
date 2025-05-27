@@ -29,7 +29,7 @@ type Server struct {
 }
 
 // NewServer creates a new instance of Server
-func NewServer(port string) (*Server, error) {
+func NewServer(port string, fakeReboot bool) (*Server, error) {
 	lis, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
 		return nil, err
@@ -37,7 +37,7 @@ func NewServer(port string) (*Server, error) {
 
 	grpcServer := grpc.NewServer()
 	sonicSvc := sonicservice.NewService()
-	systemSvc := systemservice.NewService()
+	systemSvc := systemservice.NewService(fakeReboot)
 	osSvc := osservice.NewOSService()
 
 	// Register services

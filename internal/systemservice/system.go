@@ -13,11 +13,14 @@ import (
 // Service implements the gNOI System service
 type Service struct {
 	system.UnimplementedSystemServer
+	fakeReboot bool
 }
 
 // NewService creates a new System service instance
-func NewService() *Service {
-	return &Service{}
+func NewService(fakeReboot bool) *Service {
+	return &Service{
+		fakeReboot: fakeReboot,
+	}
 }
 
 // Time implements the gNOI System.Time RPC
@@ -45,6 +48,12 @@ func (s *Service) Reboot(ctx context.Context, req *system.RebootRequest) (*syste
 	go func() {
 		log.Println("Scheduling system reboot in 2 seconds...")
 		time.Sleep(2 * time.Second)
+
+		// Check if we should fake the reboot
+		if s.fakeReboot {
+			log.Println("FAKE REBOOT MODE: Simulating a system reboot without actually rebooting")
+			return
+		}
 
 		log.Println("Executing reboot command on host system")
 
@@ -110,6 +119,10 @@ func (s *Service) RebootStatus(ctx context.Context, req *system.RebootStatusRequ
 
 	// For this simple implementation, we'll just return a fixed response
 	// In a real implementation, we would track the reboot status
+
+	if s.fakeReboot {
+		log.Println("FAKE REBOOT MODE: Reporting reboot as completed")
+	}
 
 	return &system.RebootStatusResponse{
 		Active: false, // No reboot is currently active

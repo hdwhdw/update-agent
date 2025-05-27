@@ -55,6 +55,8 @@ kubectl apply -f kubernetes/upgrade-agent-config.yaml
 kubectl apply -f kubernetes/upgrade-agent-daemonset.yaml
 ```
 
+By default, the upgrade server is configured to use "fake reboot" mode, which simulates reboots without actually restarting the system. This is useful for testing the upgrade process without disrupting your environment.
+
 ## Verify Deployment
 
 Check if the DaemonSets are running correctly:

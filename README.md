@@ -68,6 +68,12 @@ go build -o upgrade-server ./cmd/upgrade-server
 ./upgrade-server --port 8080
 ```
 
+To enable fake reboot mode (useful for testing without actual reboots):
+
+```bash
+./upgrade-server --port 8080 --fake-reboot
+```
+
 ### Docker for Server
 
 You can also run the server using Docker:
@@ -75,6 +81,12 @@ You can also run the server using Docker:
 ```bash
 docker build -f Dockerfile.server -t upgrade-server:latest .
 docker run -p 8080:8080 upgrade-server:latest
+```
+
+To enable fake reboot mode with Docker:
+
+```bash
+docker run -p 8080:8080 upgrade-server:latest --fake-reboot
 ```
 
 ### Running the OS.Verify Service
