@@ -130,14 +130,14 @@ func getVersionFromProcCmdline() (string, error) {
 	log.Printf("Successfully read cmdline from %s", readPath)
 	cmdline := string(content)
 
-	// Look for SONiC image pattern like /image-master.858213-545f73f0a/
+	// Look for SONiC image pattern like /image-internal-202311.125362094-44bd097e78/ or /image-master.858213-545f73f0a/
 	// This pattern matches the boot image path in SONiC systems
-	sonicPattern := regexp.MustCompile(`/image-master\.([0-9]+-[0-9a-f]+)/`)
+	sonicPattern := regexp.MustCompile(`/image-([a-zA-Z0-9]+)-([0-9]+\.[0-9]+-[0-9a-zA-Z]+)/`)
 	matches := sonicPattern.FindStringSubmatch(cmdline)
 
-	if len(matches) > 1 {
-		// Format output as: SONiC.master.858213-545f73f0a
-		sonicVersion := "SONiC.master." + matches[1]
+	if len(matches) > 2 {
+		// Format output as: SONiC.internal-202311.125362094-44bd097e78 or SONiC.master.858213-545f73f0a
+		sonicVersion := "SONiC." + matches[1] + "-" + matches[2]
 		log.Printf("Extracted SONiC version from image path: %s", sonicVersion)
 		return sonicVersion, nil
 	}
