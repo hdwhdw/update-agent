@@ -1,6 +1,16 @@
 #!/bin/bash
 
 # Test script for upgrade-agent using Docker container
+# Both the upgrade-server and upgrade-agent run on the same remote host.
+# This script will:
+# 1. Build and push both container images to the remote host
+# 2. Configure and start the server container on the remote host
+# 3. Configure and start the agent container on the remote host
+# 4. Monitor both containers remotely and stream logs back
+# 5. Trigger a firmware update by changing the config file
+# 6. Clean up resources after testing
+#
+# IMPORTANT: You MUST specify the --ssh-host parameter
 set -e
 
 # Parse command line arguments
@@ -31,7 +41,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --no-ignore-unimplemented Disable treating unimplemented gRPC errors as success"
       echo "  --no-fake-reboot          Disable fake reboot mode (actually reboot the system)"
       echo "  --ssh-user username       SSH username for remote server (default: admin)"
-      echo "  --ssh-host hostname       Remote server hostname or IP (default: from GRPC_TARGET)"
+      echo "  --ssh-host hostname       Remote server hostname or IP (REQUIRED for this test)"
       exit 1
       ;;
   esac
@@ -40,7 +50,8 @@ done
 # Configuration
 CONFIG_PATH="/tmp/config.yaml"
 CONFIG_MOUNT_PATH="/etc/upgrade-agent/config.yaml"
-GRPC_TARGET="10.250.0.101:50060"
+# For agent running on the same host as the server, use localhost
+GRPC_TARGET="localhost:50060"
 FIRMWARE_SOURCE="/tmp/sonic.bin"
 FIRMWARE_MOUNT_PATH="/firmware/sonic.bin"
 UPDATE_MLNX_CPLD="true"
@@ -50,7 +61,14 @@ CONTAINER_NAME="upgrade-agent-test"
 SERVER_CONTAINER_NAME="upgrade-server-test"
 # Extract port from GRPC_TARGET to ensure consistency
 SERVER_PORT="$(echo $GRPC_TARGET | cut -d':' -f2)"
-SERVER_IP="$(echo $GRPC_TARGET | cut -d':' -f1)"
+# If SERVER_IP is not explicitly set by --ssh-host, use the IP from GRPC_TARGET
+# but only if it's not localhost (in which case we need a real remote IP)
+if [ -z "${SERVER_IP}" ]; then
+  echo "Error: The --ssh-host parameter is required."
+  echo "Please specify the hostname or IP address of the remote server."
+  echo "Usage example: $0 --ssh-host 192.168.1.100"
+  exit 1
+fi
 SSH_USER="${SSH_USER:-admin}"  # Default to admin user if not set
 SSH_KEY="$HOME/.ssh/id_rsa"  # Default SSH key location
 SSH_OPTIONS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
@@ -98,25 +116,37 @@ targetVersion: "${INITIAL_VERSION}"  # When this field is updated, it will trigg
 ignoreUnimplementedRPC: ${IGNORE_UNIMPLEMENTED_RPC}
 EOF
 
+# Copy the config file to the remote server
+run_scp "${CONFIG_PATH}" "/tmp/config.yaml"
+
 echo "Building the Docker containers..."
 docker build -t upgrade-agent:latest .
 docker build -t upgrade-server:latest -f Dockerfile.server .
 
-echo "Copying the server image to remote host ${SERVER_IP}..."
-# Save the server Docker image to a file
+echo "Saving and copying both Docker images to remote host ${SERVER_IP}..."
+# Save both Docker images to files
 docker save upgrade-server:latest > /tmp/upgrade-server-image.tar
+docker save upgrade-agent:latest > /tmp/upgrade-agent-image.tar
 
-# Copy the Docker image to the remote server
+# Copy both Docker images to the remote server
 run_scp "/tmp/upgrade-server-image.tar" "/tmp/"
+run_scp "/tmp/upgrade-agent-image.tar" "/tmp/"
 
-# SSH to remote server, load the image, and start the container
-echo "Starting upgrade server container on remote host ${SERVER_IP}..."
+# SSH to remote server, load the images, and start the containers
+echo "Starting containers on remote host ${SERVER_IP}..."
 run_ssh "
-# Load the Docker image
+# Load the Docker images
 docker load < /tmp/upgrade-server-image.tar
+docker load < /tmp/upgrade-agent-image.tar
 
-# Remove any existing container with the same name
+# Remove any existing containers with the same names
 docker rm -f upgrade-server-test >/dev/null 2>&1 || true
+docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
+
+# Create remote config and firmware directories
+mkdir -p /tmp/upgrade-agent
+mkdir -p $(dirname /tmp${FIRMWARE_SOURCE})
+touch /tmp${FIRMWARE_SOURCE}
 
 # Start the server container
 # Mount the entire host filesystem for simplicity and full access to all OS information
@@ -141,7 +171,7 @@ echo "=== Initial server logs on ${SERVER_IP} ==="
 run_ssh "docker logs ${SERVER_CONTAINER_NAME}"
 echo "==========================="
 
-echo "Starting upgrade agent container with initial version ${INITIAL_VERSION}..."
+echo "Starting upgrade agent container with initial version ${INITIAL_VERSION} on remote host ${SERVER_IP}..."
 
 # Create a signal file directory if it doesn't exist
 SIGNAL_DIR="/tmp/upgrade-agent-signals"
@@ -152,7 +182,7 @@ rm -f "${SIGNAL_DIR}/container_ready" "${SIGNAL_DIR}/test_complete" "${SIGNAL_DI
 
 # Set up server log monitoring in background
 echo "${SERVER_CONTAINER_NAME}" > "${SIGNAL_DIR}/server_ready"
-echo "Starting server log monitoring..."
+echo "Starting server and agent log monitoring..."
 {
   # Loop to continuously fetch server logs
   while true; do
@@ -164,21 +194,34 @@ echo "Starting server log monitoring..."
   done
 } &
 SERVER_LOGS_PID=$!
-echo "Server logs will be collected to /tmp/server-output.log"
 
-# Run in background mode with logs redirected to file
-docker run --name ${CONTAINER_NAME} \
-  --network=host \
-  -v ${CONFIG_PATH}:${CONFIG_MOUNT_PATH} \
-  -v ${FIRMWARE_SOURCE}:${FIRMWARE_MOUNT_PATH} \
-  upgrade-agent:latest > /tmp/agent-output.log 2>&1 &
-AGENT_CONTAINER_PID=$!
-echo "Agent container started with PID: ${AGENT_CONTAINER_PID}"
-echo "You can view logs in real-time with:"
-echo "  - tail -f /tmp/agent-output.log"
-echo "  - tail -f /tmp/server-output.log"
-echo "  - ./test/monitor_logs.sh ${CONTAINER_NAME}"
-echo "  - ./test/monitor_logs.sh --server (for server logs)"
+{
+  # Loop to continuously fetch agent logs
+  while true; do
+    if [ -f "${SIGNAL_DIR}/test_complete" ]; then
+      break
+    fi
+    run_ssh "docker logs --since=5s ${CONTAINER_NAME} 2>&1" >> /tmp/agent-output.log
+    sleep 5
+  done
+} &
+AGENT_LOGS_PID=$!
+
+echo "Logs will be collected to:"
+echo "  - Server logs: /tmp/server-output.log"
+echo "  - Agent logs: /tmp/agent-output.log"
+
+# Start the agent container on the remote host
+run_ssh "
+# Start the agent container
+docker run --name ${CONTAINER_NAME} \\
+  --network=host \\
+  -v /tmp/config.yaml:${CONFIG_MOUNT_PATH} \\
+  -v /tmp${FIRMWARE_SOURCE}:${FIRMWARE_MOUNT_PATH} \\
+  --detach \\
+  upgrade-agent:latest
+echo \"Agent container started on \$(hostname)\"
+"
 
 # Create a signal file that the monitor script can check for
 # and write the container name to it
@@ -188,11 +231,13 @@ echo "Waiting for agent to initialize (5 seconds)..."
 sleep 5
 
 # Display initial logs
-echo "=== Initial agent logs ==="
-docker logs ${CONTAINER_NAME}
+echo "=== Initial agent logs from ${SERVER_IP} ==="
+run_ssh "docker logs ${CONTAINER_NAME}"
 echo "=========================="
-echo "Note: You can also monitor logs in real-time using:"
-echo "  ./test/monitor_logs.sh --wait"
+echo "Note: Both containers are running on the remote host ${SERVER_IP}."
+echo "Logs are being collected in the background to:"
+echo "  - /tmp/agent-output.log"
+echo "  - /tmp/server-output.log"
 
 echo "Updating config to trigger firmware update to version ${NEW_VERSION}..."
 cat > ${CONFIG_PATH} << EOF
@@ -203,9 +248,14 @@ targetVersion: "${NEW_VERSION}"  # When this field is updated, it will trigger a
 ignoreUnimplementedRPC: ${IGNORE_UNIMPLEMENTED_RPC}
 EOF
 
+# Copy the updated config file to the remote server
+run_scp "${CONFIG_PATH}" "/tmp/config.yaml"
+
 echo "Waiting for update process to complete (max 300 seconds)..."
-echo "You can also run './test/monitor_logs.sh --wait' in another terminal to follow agent logs."
-echo "You can also run 'tail -f /tmp/server-output.log' in another terminal to follow server logs."
+echo "Both the upgrade-agent and upgrade-server are running on remote host ${SERVER_IP}."
+echo "You can monitor logs in real-time with:"
+echo "  - tail -f /tmp/agent-output.log (for agent logs)"
+echo "  - tail -f /tmp/server-output.log (for server logs)"
 
 # Set a maximum timeout (in seconds)
 MAX_TIMEOUT=300
@@ -221,9 +271,9 @@ COMPLETE_INDICATORS=(
 
 # Function to check if upgrade is complete
 check_upgrade_complete() {
-  # Get the latest logs
+  # Get the latest logs from the remote agent
   local logs
-  logs=$(docker logs ${CONTAINER_NAME} 2>&1)
+  logs=$(run_ssh "docker logs ${CONTAINER_NAME} 2>&1")
 
   # Check for any of the success indicators
   for indicator in "${COMPLETE_INDICATORS[@]}"; do
@@ -248,7 +298,7 @@ while true; do
 
   # Display recent logs
   echo "=== Agent logs at $(date) [${ELAPSED_TIME}s elapsed] ==="
-  docker logs --since=5s ${CONTAINER_NAME}
+  run_ssh "docker logs --since=5s ${CONTAINER_NAME} 2>&1" || echo "Could not retrieve agent logs"
   echo "==========================="
 
   # Display recent server logs
@@ -267,7 +317,7 @@ done
 
 echo "Test complete. Displaying final logs..."
 echo "=== Final agent logs ==="
-docker logs --tail 20 ${CONTAINER_NAME}
+run_ssh "docker logs --tail 20 ${CONTAINER_NAME} 2>&1" || echo "Could not retrieve final agent logs"
 echo "========================"
 
 echo "=== Final server logs ==="
@@ -277,25 +327,26 @@ echo "========================"
 # Signal that the test is complete
 echo "${CONTAINER_NAME}" > "${SIGNAL_DIR}/test_complete"
 
-echo "Stopping local container..."
-docker stop ${CONTAINER_NAME}
-docker rm ${CONTAINER_NAME}
-
-# Kill the server log monitoring process
+# Kill the log monitoring processes
 if [ -n "${SERVER_LOGS_PID}" ]; then
   echo "Stopping server log monitoring (PID: ${SERVER_LOGS_PID})..."
   kill ${SERVER_LOGS_PID} 2>/dev/null || true
 fi
 
-echo "Stopping and removing server container on remote host ${SERVER_IP}..."
+if [ -n "${AGENT_LOGS_PID}" ]; then
+  echo "Stopping agent log monitoring (PID: ${AGENT_LOGS_PID})..."
+  kill ${AGENT_LOGS_PID} 2>/dev/null || true
+fi
+
+echo "Stopping and removing containers on remote host ${SERVER_IP}..."
 run_ssh "
-docker stop ${SERVER_CONTAINER_NAME}
-docker rm ${SERVER_CONTAINER_NAME}
-rm -f /tmp/upgrade-server-image.tar
+docker stop ${CONTAINER_NAME} ${SERVER_CONTAINER_NAME}
+docker rm ${CONTAINER_NAME} ${SERVER_CONTAINER_NAME}
+rm -f /tmp/upgrade-server-image.tar /tmp/upgrade-agent-image.tar /tmp/config.yaml
 "
 
 # Clean up local temporary files
-rm -f /tmp/upgrade-server-image.tar
+rm -f /tmp/upgrade-server-image.tar /tmp/upgrade-agent-image.tar
 
 echo "Full logs saved to:"
 echo "- Agent logs: /tmp/agent-output.log"
