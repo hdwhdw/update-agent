@@ -27,10 +27,16 @@ spec:
           subPath: config.yaml
         - name: firmware-volume
           mountPath: /firmware
+        - name: host-filesystem
+          mountPath: /host
       volumes:
       - name: config-volume
         configMap:
           name: upgrade-agent-config
       - name: firmware-volume
         emptyDir: {}  # You may want to use a PVC or hostPath for real firmware
+      - name: host-filesystem
+        hostPath:
+          path: /
+          type: Directory
       restartPolicy: Always
