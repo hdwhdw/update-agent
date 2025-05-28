@@ -16,7 +16,7 @@ spec:
     spec:
       hostNetwork: true  # Equivalent to --network=host
       nodeSelector:
-        role: switch  # This will deploy the daemon only on nodes with label role=switch
+        upgrade_server_enabled: "true"  # This will deploy the daemon only on nodes with label upgrade_server_enabled=true
       containers:
       - name: upgrade-server
         image: upgrade-server:latest

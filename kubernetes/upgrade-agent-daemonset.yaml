@@ -14,8 +14,9 @@ spec:
       labels:
         app: upgrade-agent
     spec:
+      hostNetwork: true  # Use host network to avoid CNI issues
       nodeSelector:
-        role: switch  # This will deploy the daemon only on nodes with label role=switch
+        upgrade_agent_enabled: "true"  # This will deploy the daemon only on nodes with label upgrade-agent-enabled=true
       containers:
       - name: upgrade-agent
         image: upgrade-agent:latest
