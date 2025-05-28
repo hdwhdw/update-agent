@@ -8,5 +8,6 @@ data:
     grpcTarget: "localhost:50060"
     firmwareSource: "/firmware/sonic.bin"
     updateMlnxCpldFw: true
-    targetVersion: "1.0.0"
+    targetVersion: "1.2.4"  # Updated version to trigger refresh
     ignoreUnimplementedRPC: false
+    logLevel: "debug"  # Added new configuration parameter

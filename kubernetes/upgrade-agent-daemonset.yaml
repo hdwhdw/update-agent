@@ -23,8 +23,7 @@ spec:
         imagePullPolicy: IfNotPresent
         volumeMounts:
         - name: config-volume
-          mountPath: /etc/upgrade-agent/config.yaml
-          subPath: config.yaml
+          mountPath: /etc/upgrade-agent
         - name: firmware-volume
           mountPath: /firmware
         - name: host-filesystem

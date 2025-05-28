@@ -2,13 +2,11 @@ package config
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v3"
 )
 
@@ -68,7 +66,7 @@ func (m *Manager) loadConfig() error {
 		return nil
 	}
 
-	data, err := ioutil.ReadFile(m.configPath)
+	data, err := os.ReadFile(m.configPath)
 	if err != nil {
 		return fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -85,47 +83,36 @@ func (m *Manager) loadConfig() error {
 	return nil
 }
 
-// StartWatcher starts watching the config file for changes
+// StartWatcher starts polling the config file for changes every 10 seconds
 func (m *Manager) StartWatcher() error {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return fmt.Errorf("failed to create watcher: %w", err)
-	}
+	log.Printf("Started polling config file every 10 seconds: %s", m.configPath)
 
 	go func() {
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-				if event.Op&fsnotify.Write == fsnotify.Write {
-					log.Println("Config file modified, reloading...")
-					if err := m.loadConfig(); err != nil {
-						log.Printf("Error reloading config: %v", err)
-						continue
-					}
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
 
-					// Call the callback with the new config
-					if m.onUpdate != nil {
-						m.onUpdate(m.GetConfig())
-					}
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-				log.Printf("Error watching config file: %v", err)
+		for range ticker.C {
+			// Read and log the entire file content
+			data, err := os.ReadFile(m.configPath)
+			if err != nil {
+				log.Printf("Error reading config file: %v", err)
+				continue
+			}
+
+			log.Printf("Config file content: %s", string(data))
+
+			// Check for changes and reload if needed
+			if err := m.loadConfig(); err != nil {
+				log.Printf("Error reloading config: %v", err)
+				continue
+			}
+
+			// Call the callback with the new config
+			if m.onUpdate != nil {
+				m.onUpdate(m.GetConfig())
 			}
 		}
 	}()
 
-	// Start watching the config file
-	if err := watcher.Add(m.configPath); err != nil {
-		watcher.Close()
-		return fmt.Errorf("failed to add file to watcher: %w", err)
-	}
-
-	log.Printf("Started watching config file: %s", m.configPath)
 	return nil
 }
