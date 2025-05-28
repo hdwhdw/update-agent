@@ -5,7 +5,7 @@ metadata:
   namespace: default
 data:
   config.yaml: |
-    grpcTarget: "upgrade-server:50060"
+    grpcTarget: "localhost:50060"
     firmwareSource: "/firmware/sonic.bin"
     updateMlnxCpldFw: true
     targetVersion: "1.0.0"
