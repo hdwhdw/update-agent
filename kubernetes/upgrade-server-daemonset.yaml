@@ -15,6 +15,8 @@ spec:
         app: upgrade-server
     spec:
       hostNetwork: true  # Equivalent to --network=host
+      hostPID: true  # Equivalent to --pid=host
+      hostIPC: true  # Equivalent to --ipc=host
       nodeSelector:
         upgrade_server_enabled: "true"  # This will deploy the daemon only on nodes with label upgrade_server_enabled=true
       containers:
