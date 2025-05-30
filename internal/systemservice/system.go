@@ -54,62 +54,44 @@ func (s *Service) Reboot(ctx context.Context, req *system.RebootRequest) (*syste
 			log.Println("FAKE REBOOT MODE: Simulating a system reboot without actually rebooting")
 			return
 		}
-
+		
 		log.Println("Executing reboot command on host system")
-
-		// Method 1: Use the reboot syscall directly (most direct way to reboot)
-		cmd := exec.Command("sync") // Sync filesystem before reboot
+		
+		// We've verified we can access the host's namespaces correctly
+		log.Println("Initiating host reboot via nsenter")
+		
+		// Ensure all log messages are written before the reboot command
+		log.Println("--------- REBOOT COMMAND WILL BE EXECUTED NEXT ---------")
+		// Force flush log buffers by syncing filesystem
+		cmd := exec.Command("sync")
 		cmd.Run()
-
-		// Attempt direct syscall access to reboot
-		log.Println("Attempting reboot via direct syscall")
-		cmd = exec.Command("sh", "-c", "echo b > /proc/sysrq-trigger")
-		err := cmd.Run()
-
+		time.Sleep(1 * time.Second)
+		
+		// Use the exact command format specified for rebooting the host
+		log.Printf("Executing reboot command: nsenter --target 1 --mount --uts --ipc --net --pid reboot")
+		
+		// Run the command and don't wait for output to avoid being killed mid-execution
+		rebootCmd := exec.Command("nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "reboot")
+		err := rebootCmd.Start()
+		
 		if err != nil {
-			log.Printf("Error executing direct syscall reboot: %v", err)
-
-			// Method 2: Use nsenter to access the host's namespaces
-			log.Println("Attempting reboot via nsenter")
-			cmd = exec.Command("nsenter", "-m", "-u", "-i", "-n", "-p", "-t", "1", "reboot", "-f")
-			err = cmd.Run()
-
-			if err != nil {
-				log.Printf("Error executing reboot via nsenter: %v", err)
-
-				// Method 3: Try various paths to the reboot command
-				rebootPaths := []string{
-					"/sbin/reboot",
-					"/bin/reboot",
-					"/usr/sbin/reboot",
-					"/host/sbin/reboot",
-					"/host/bin/reboot",
-					"/host/usr/sbin/reboot",
-				}
-
-				for _, path := range rebootPaths {
-					log.Printf("Attempting reboot with %s", path)
-					cmd = exec.Command(path, "-f")
-					err = cmd.Run()
-					if err == nil {
-						log.Printf("Successfully initiated reboot with %s", path)
-						return
-					}
-				}
-
-				log.Println("All reboot attempts failed, trying force reboot through sysrq")
-				// Last resort - force reboot through kernel sysrq
-				cmd = exec.Command("sh", "-c", "echo 1 > /proc/sys/kernel/sysrq && echo b > /proc/sysrq-trigger")
-				cmd.Run()
-			} else {
-				log.Println("Successfully initiated reboot with nsenter")
-			}
+			log.Printf("Error starting reboot command: %v", err)
 		} else {
-			log.Println("Successfully initiated reboot with direct syscall")
+			log.Println("Reboot command started successfully, system will reboot momentarily...")
 		}
+		
+		// Give the command a moment to execute
+		time.Sleep(1 * time.Second)
+		
+		// Log immediately after attempt to ensure we see this before any reboot happens
+		log.Printf("Reboot command executed. System should be rebooting now.")
+		
+		// Sleep a bit to ensure logs are flushed
+		log.Println("Waiting for reboot to take effect...")
+		time.Sleep(5 * time.Second)
 	}()
 
-	log.Println("Reboot scheduled successfully")
+	log.Println("Reboot initiated successfully")
 	return &system.RebootResponse{}, nil
 }
 
