@@ -3,7 +3,7 @@ module upgrade-agent
 go 1.24.1
 
 require (
-	github.com/fsnotify/fsnotify v1.9.0
+	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/openconfig/gnoi v0.6.1
 	google.golang.org/grpc v1.72.1
 	google.golang.org/protobuf v1.36.6
@@ -11,7 +11,6 @@ require (
 )
 
 require (
-	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/godbus/dbus/v5 v5.0.4 // indirect
 	github.com/openconfig/bootz v0.3.1 // indirect
 	github.com/openconfig/gnmi v0.10.0 // indirect
