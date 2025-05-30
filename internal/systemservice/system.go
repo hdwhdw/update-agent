@@ -54,38 +54,38 @@ func (s *Service) Reboot(ctx context.Context, req *system.RebootRequest) (*syste
 			log.Println("FAKE REBOOT MODE: Simulating a system reboot without actually rebooting")
 			return
 		}
-		
+
 		log.Println("Executing reboot command on host system")
-		
+
 		// We've verified we can access the host's namespaces correctly
 		log.Println("Initiating host reboot via nsenter")
-		
+
 		// Ensure all log messages are written before the reboot command
 		log.Println("--------- REBOOT COMMAND WILL BE EXECUTED NEXT ---------")
 		// Force flush log buffers by syncing filesystem
 		cmd := exec.Command("sync")
 		cmd.Run()
 		time.Sleep(1 * time.Second)
-		
+
 		// Use the exact command format specified for rebooting the host
 		log.Printf("Executing reboot command: nsenter --target 1 --mount --uts --ipc --net --pid reboot")
-		
+
 		// Run the command and don't wait for output to avoid being killed mid-execution
 		rebootCmd := exec.Command("nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "reboot")
 		err := rebootCmd.Start()
-		
+
 		if err != nil {
 			log.Printf("Error starting reboot command: %v", err)
 		} else {
 			log.Println("Reboot command started successfully, system will reboot momentarily...")
 		}
-		
+
 		// Give the command a moment to execute
 		time.Sleep(1 * time.Second)
-		
+
 		// Log immediately after attempt to ensure we see this before any reboot happens
 		log.Printf("Reboot command executed. System should be rebooting now.")
-		
+
 		// Sleep a bit to ensure logs are flushed
 		log.Println("Waiting for reboot to take effect...")
 		time.Sleep(5 * time.Second)

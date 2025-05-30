@@ -47,6 +47,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Check if remote user has sudo access
+echo "Checking if remote user ${SSH_USER:-admin} has sudo access on ${SERVER_IP}..."
+if ! run_ssh "sudo -n true" &>/dev/null; then
+  echo "Warning: The user ${SSH_USER:-admin} may not have passwordless sudo access on ${SERVER_IP}."
+  echo "You may be prompted for a password during cleanup or encounter permission issues."
+  echo "Press Enter to continue or Ctrl+C to abort..."
+  read -r
+fi
+
 # Configuration
 CONFIG_DIR="/tmp/upgrade-agent-config"
 CONFIG_FILE="config.yaml"
@@ -121,8 +130,13 @@ ignoreUnimplementedRPC: ${IGNORE_UNIMPLEMENTED_RPC}
 EOF
 
 # Create config directory on remote server and copy the config file
-run_ssh "mkdir -p /tmp/upgrade-agent-config"
+# First clean up any existing config directory to avoid permission issues from previous runs
+run_ssh "sudo rm -rf /tmp/upgrade-agent-config"
+# Create with current user ownership and make it world-writable to avoid permission issues
+run_ssh "mkdir -p /tmp/upgrade-agent-config && chmod 777 /tmp/upgrade-agent-config"
 run_scp "${CONFIG_PATH}" "/tmp/upgrade-agent-config/"
+# Ensure config file is also accessible
+run_ssh "chmod 666 /tmp/upgrade-agent-config/${CONFIG_FILE}"
 
 echo "Building the Docker containers..."
 docker build -t upgrade-agent:latest .
@@ -223,8 +237,10 @@ run_ssh "
 # Start the agent container
 docker run --name ${CONTAINER_NAME} \\
   --network=host \\
-  -v /tmp/upgrade-agent-config:${CONFIG_MOUNT_PATH} \\
-  -v /tmp${FIRMWARE_SOURCE}:${FIRMWARE_MOUNT_PATH} \\
+  -v /tmp/upgrade-agent-config:${CONFIG_MOUNT_PATH}:z \\
+  -v /tmp${FIRMWARE_SOURCE}:${FIRMWARE_MOUNT_PATH}:z \\
+  --restart=always \\
+  --user $(id -u):$(id -g) \\
   --detach \\
   upgrade-agent:latest
 echo \"Agent container started on \$(hostname)\"
@@ -257,6 +273,8 @@ EOF
 
 # Copy the updated config file to the remote server
 run_scp "${CONFIG_PATH}" "/tmp/upgrade-agent-config/"
+# Ensure the updated config file has the right permissions
+run_ssh "chmod 666 /tmp/upgrade-agent-config/${CONFIG_FILE}"
 
 echo "Waiting for update process to complete (max 300 seconds)..."
 echo "Both the upgrade-agent and upgrade-server are running on remote host ${SERVER_IP}."
@@ -283,40 +301,40 @@ check_upgrade_complete() {
     # Get the latest logs from the server
     local server_logs
     server_logs=$(run_ssh "docker logs ${SERVER_CONTAINER_NAME} 2>&1" 2>/dev/null || echo "")
-    
+
     # Check if the reboot command was initiated
     if echo "$server_logs" | grep -q "Initiating host reboot via nsenter"; then
       echo "Reboot command initiated, waiting for system to reboot..."
-      
+
       # Use ping to check if the system goes down (reboot starts)
       echo "Using ping to detect when system goes down..."
-      
+
       # First ensure we can ping the system
       if ping -c 1 -W 1 ${SERVER_IP} &>/dev/null; then
         echo "System is currently pingable. Waiting for it to go down..."
-        
+
         # Wait for the system to stop responding to pings (max 2 minutes)
         REBOOT_START_WAIT=120
         PING_START_TIME=$(date +%s)
         SYSTEM_DOWN=false
-        
+
         while [ $SYSTEM_DOWN = false ]; do
           CURRENT_TIME=$(date +%s)
           ELAPSED_TIME=$((CURRENT_TIME - PING_START_TIME))
-          
+
           # Exit if we've exceeded the maximum timeout
           if [ $ELAPSED_TIME -ge $REBOOT_START_WAIT ]; then
             echo "System didn't go down after ${REBOOT_START_WAIT} seconds. Reboot may have failed."
             return 1
           fi
-          
+
           # Check if the system is down
           if ! ping -c 1 -W 1 ${SERVER_IP} &>/dev/null; then
             echo "System is down! Reboot has started. (${ELAPSED_TIME}s elapsed)"
             SYSTEM_DOWN=true
             return 0
           fi
-          
+
           echo "System still up after ${ELAPSED_TIME}s. Checking again in 5 seconds..."
           sleep 5
         done
@@ -325,7 +343,7 @@ check_upgrade_complete() {
         return 1
       fi
     fi
-    
+
     return 1  # No reboot command initiated yet
   else
     # In fake reboot mode, proceed with normal completion detection
@@ -392,33 +410,33 @@ echo "Test complete. Displaying final logs..."
 if [[ "$FAKE_REBOOT" == "false" || "$REBOOT_DETECTED" == "true" ]]; then
   echo "System reboot detected or in progress."
   echo "Waiting for system to come back online..."
-  
+
   # Wait for system to come back online (max 5 minutes)
   MAX_REBOOT_WAIT=300
   REBOOT_START_TIME=$(date +%s)
   SYSTEM_BACK_ONLINE=false
-  
+
   while [ $SYSTEM_BACK_ONLINE = false ]; do
     CURRENT_TIME=$(date +%s)
     ELAPSED_TIME=$((CURRENT_TIME - REBOOT_START_TIME))
-    
+
     # Exit if we've exceeded the maximum timeout
     if [ $ELAPSED_TIME -ge $MAX_REBOOT_WAIT ]; then
       echo "Maximum reboot wait time reached ($MAX_REBOOT_WAIT seconds). Proceeding..."
       break
     fi
-    
+
     echo "Pinging system to check if it's back online (${ELAPSED_TIME}s elapsed)..."
     if ping -c 3 -W 2 ${SERVER_IP} &>/dev/null; then
       echo "System is responding to pings again!"
-      
+
       # Now check if SSH is available as well (services may still be starting)
       echo "Checking if SSH service is available..."
       for i in {1..6}; do  # Try up to 6 times (30 seconds total)
         if run_ssh "echo 'SSH is available'" &>/dev/null; then
           echo "SSH connection successful - system is fully back online!"
           SYSTEM_BACK_ONLINE=true
-          
+
           # Give a bit more time for all services to start
           echo "Waiting 15 more seconds for services to stabilize..."
           sleep 15
@@ -427,7 +445,7 @@ if [[ "$FAKE_REBOOT" == "false" || "$REBOOT_DETECTED" == "true" ]]; then
         echo "SSH not yet available, waiting 5 seconds... (attempt $i of 6)"
         sleep 5
       done
-      
+
       # If we can ping but SSH isn't available after retries, still proceed
       if [ $SYSTEM_BACK_ONLINE = false ]; then
         echo "System is responding to pings but SSH is not available yet. Proceeding anyway..."
@@ -438,12 +456,12 @@ if [[ "$FAKE_REBOOT" == "false" || "$REBOOT_DETECTED" == "true" ]]; then
       sleep 15
     fi
   done
-  
+
   # Try to get final logs, but don't fail if we can't
   echo "=== Final agent logs (if available) ==="
   run_ssh "docker logs --tail 20 ${CONTAINER_NAME} 2>&1" || echo "Agent container may not be available after reboot"
   echo "========================"
-  
+
   echo "=== Final server logs (if available) ==="
   run_ssh "docker logs --tail 20 ${SERVER_CONTAINER_NAME} 2>&1" || echo "Server container may not be available after reboot"
   echo "========================"
@@ -452,7 +470,7 @@ else
   echo "=== Final agent logs ==="
   run_ssh "docker logs --tail 20 ${CONTAINER_NAME} 2>&1" || echo "Could not retrieve final agent logs"
   echo "========================"
-  
+
   echo "=== Final server logs ==="
   run_ssh "docker logs --tail 20 ${SERVER_CONTAINER_NAME} 2>&1" || echo "Could not retrieve final server logs"
   echo "========================"
@@ -469,12 +487,12 @@ if [[ "$FAKE_REBOOT" == "false" || "$REBOOT_DETECTED" == "true" ]]; then
   echo "Check if containers survived the reboot:"
   run_ssh "docker ps | grep -E '${SERVER_CONTAINER_NAME}|${CONTAINER_NAME}'" || echo "Containers not found after reboot"
   echo ""
-  
+
   # Check if the nsenter command worked correctly
   echo "Checking system boot time to confirm reboot occurred:"
   run_ssh "uptime -s" || echo "Could not check system uptime"
   echo ""
-  
+
   echo "You can manually connect to the system with:"
   echo "ssh ${SSH_USER:-admin}@${SERVER_IP}"
   echo ""
@@ -501,7 +519,8 @@ run_ssh "
 docker stop ${CONTAINER_NAME} ${SERVER_CONTAINER_NAME}
 docker rm ${CONTAINER_NAME} ${SERVER_CONTAINER_NAME}
 rm -f /tmp/upgrade-server-image.tar /tmp/upgrade-agent-image.tar
-rm -rf /tmp/upgrade-agent-config
+# Remove config directory with sudo to ensure it works regardless of ownership
+sudo rm -rf /tmp/upgrade-agent-config
 "
 
 # Clean up local temporary files
