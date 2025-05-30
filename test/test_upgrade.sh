@@ -13,7 +13,7 @@
 # IMPORTANT: You MUST specify the --ssh-host parameter
 set -e
 
-# Parse command line arguments
+# Parse command line argu  # Check upgrade state file to see if it was created and cleared properly
 IGNORE_UNIMPLEMENTED_RPC=true  # Default is true as requested
 FAKE_REBOOT=true
 while [[ $# -gt 0 ]]; do
@@ -57,10 +57,12 @@ if ! run_ssh "sudo -n true" &>/dev/null; then
 fi
 
 # Configuration
-CONFIG_DIR="/tmp/upgrade-agent-config"
+LOCAL_CONFIG_DIR="/tmp/upgrade-agent"  # Local temporary directory for config
+REMOTE_CONFIG_DIR="/host/upgrade-agent"  # Persistent location on the remote host
 CONFIG_FILE="config.yaml"
-CONFIG_PATH="${CONFIG_DIR}/${CONFIG_FILE}"
-CONFIG_MOUNT_PATH="/etc/upgrade-agent"
+CONFIG_MOUNT_PATH="/etc/upgrade-agent"  # Mount point inside the container
+LOCAL_CONFIG_PATH="${LOCAL_CONFIG_DIR}/${CONFIG_FILE}"  # Local path on this machine
+REMOTE_CONFIG_PATH="${REMOTE_CONFIG_DIR}/${CONFIG_FILE}"  # Path on remote host
 # For agent running on the same host as the server, use localhost
 GRPC_TARGET="localhost:50060"
 FIRMWARE_SOURCE="/tmp/sonic.bin"
@@ -120,8 +122,8 @@ echo "SSH key setup complete. Using key-based authentication."
 
 echo "Creating initial config file..."
 # Ensure the config directory exists locally
-mkdir -p "${CONFIG_DIR}"
-cat > ${CONFIG_PATH} << EOF
+mkdir -p "${LOCAL_CONFIG_DIR}"
+cat > ${LOCAL_CONFIG_PATH} << EOF
 grpcTarget: "${GRPC_TARGET}"
 firmwareSource: "${FIRMWARE_MOUNT_PATH}"
 updateMlnxCpldFw: ${UPDATE_MLNX_CPLD}
@@ -131,12 +133,12 @@ EOF
 
 # Create config directory on remote server and copy the config file
 # First clean up any existing config directory to avoid permission issues from previous runs
-run_ssh "sudo rm -rf /tmp/upgrade-agent-config"
-# Create with current user ownership and make it world-writable to avoid permission issues
-run_ssh "mkdir -p /tmp/upgrade-agent-config && chmod 777 /tmp/upgrade-agent-config"
-run_scp "${CONFIG_PATH}" "/tmp/upgrade-agent-config/"
+run_ssh "sudo rm -rf ${REMOTE_CONFIG_DIR}"
+# Create with world-writable permissions
+run_ssh "sudo mkdir -p ${REMOTE_CONFIG_DIR} && sudo chmod 777 ${REMOTE_CONFIG_DIR}"
+run_scp "${LOCAL_CONFIG_PATH}" "${REMOTE_CONFIG_DIR}/"
 # Ensure config file is also accessible
-run_ssh "chmod 666 /tmp/upgrade-agent-config/${CONFIG_FILE}"
+run_ssh "sudo chmod 666 ${REMOTE_CONFIG_DIR}/${CONFIG_FILE}"
 
 echo "Building the Docker containers..."
 docker build -t upgrade-agent:latest .
@@ -179,6 +181,10 @@ docker run --name upgrade-server-test \\
   -v /:/host \\
   --detach \\
   upgrade-server:latest --port ${SERVER_PORT} $([ "$FAKE_REBOOT" = true ] && echo "--fake-reboot")
+
+# Create persistent directory for upgrade state on host filesystem
+sudo mkdir -p ${REMOTE_CONFIG_DIR}
+sudo chmod 777 ${REMOTE_CONFIG_DIR}
 
 # Display initial logs
 echo \"Server container started on \$(hostname)\"
@@ -237,7 +243,7 @@ run_ssh "
 # Start the agent container
 docker run --name ${CONTAINER_NAME} \\
   --network=host \\
-  -v /tmp/upgrade-agent-config:${CONFIG_MOUNT_PATH}:z \\
+  -v ${REMOTE_CONFIG_DIR}:${CONFIG_MOUNT_PATH}:z \\
   -v /tmp${FIRMWARE_SOURCE}:${FIRMWARE_MOUNT_PATH}:z \\
   --restart=always \\
   --user $(id -u):$(id -g) \\
@@ -263,7 +269,7 @@ echo "  - /tmp/agent-output.log"
 echo "  - /tmp/server-output.log"
 
 echo "Updating config to trigger firmware update to version ${NEW_VERSION}..."
-cat > ${CONFIG_PATH} << EOF
+cat > ${LOCAL_CONFIG_PATH} << EOF
 grpcTarget: "${GRPC_TARGET}"
 firmwareSource: "${FIRMWARE_MOUNT_PATH}"
 updateMlnxCpldFw: ${UPDATE_MLNX_CPLD}
@@ -272,9 +278,9 @@ ignoreUnimplementedRPC: ${IGNORE_UNIMPLEMENTED_RPC}
 EOF
 
 # Copy the updated config file to the remote server
-run_scp "${CONFIG_PATH}" "/tmp/upgrade-agent-config/"
+run_scp "${LOCAL_CONFIG_PATH}" "${REMOTE_CONFIG_DIR}/"
 # Ensure the updated config file has the right permissions
-run_ssh "chmod 666 /tmp/upgrade-agent-config/${CONFIG_FILE}"
+run_ssh "chmod 666 ${REMOTE_CONFIG_DIR}/${CONFIG_FILE}"
 
 echo "Waiting for update process to complete (max 300 seconds)..."
 echo "Both the upgrade-agent and upgrade-server are running on remote host ${SERVER_IP}."
@@ -440,6 +446,94 @@ if [[ "$FAKE_REBOOT" == "false" || "$REBOOT_DETECTED" == "true" ]]; then
           # Give a bit more time for all services to start
           echo "Waiting 15 more seconds for services to stabilize..."
           sleep 15
+
+          # Check if both containers restarted
+          echo "Checking if containers automatically restarted after reboot..."
+          AGENT_RUNNING=$(run_ssh "docker ps -q -f name=${CONTAINER_NAME}" | wc -l)
+          SERVER_RUNNING=$(run_ssh "docker ps -q -f name=${SERVER_CONTAINER_NAME}" | wc -l)
+
+          if [ "$AGENT_RUNNING" -eq "1" ] && [ "$SERVER_RUNNING" -eq "1" ]; then
+            echo "✅ Both containers restarted successfully after system reboot!"
+
+            # No need to recreate config file since it's now in a persistent location
+
+            # Restart log monitoring for both containers
+            echo "Restarting log monitoring for both containers..."
+            {
+              # Loop to continuously fetch server logs
+              while true; do
+                if [ -f "${SIGNAL_DIR}/test_complete" ]; then
+                  break
+                fi
+                run_ssh "docker logs --since=5s ${SERVER_CONTAINER_NAME} 2>&1" >> /tmp/server-output.log
+                sleep 5
+              done
+            } &
+            SERVER_LOGS_PID=$!
+
+            {
+              # Loop to continuously fetch agent logs
+              while true; do
+                if [ -f "${SIGNAL_DIR}/test_complete" ]; then
+                  break
+                fi
+                run_ssh "docker logs --since=5s ${CONTAINER_NAME} 2>&1" >> /tmp/agent-output.log
+                sleep 5
+              done
+            } &
+            AGENT_LOGS_PID=$!
+
+            # Now monitor logs for post-reboot verification
+            echo "Monitoring for post-reboot verification steps..."
+            POST_REBOOT_TIMEOUT=180 # 3 minutes
+            POST_REBOOT_START_TIME=$(date +%s)
+            VERIFICATION_COMPLETE=false
+
+            while [ $VERIFICATION_COMPLETE = false ]; do
+              CURRENT_TIME=$(date +%s)
+              POST_REBOOT_ELAPSED_TIME=$((CURRENT_TIME - POST_REBOOT_START_TIME))
+
+              # Exit if we've exceeded the post-reboot timeout
+              if [ $POST_REBOOT_ELAPSED_TIME -ge $POST_REBOOT_TIMEOUT ]; then
+                echo "Post-reboot verification timeout after ${POST_REBOOT_TIMEOUT} seconds."
+                break
+              fi
+
+              # Get recent agent logs and look for verification messages
+              RECENT_LOGS=$(run_ssh "docker logs --since=10s ${CONTAINER_NAME} 2>&1")
+
+              # Check for post-reboot verification indicators
+              if echo "$RECENT_LOGS" | grep -q "Starting post-reboot verification"; then
+                echo "✅ Post-reboot verification started!"
+              fi
+
+              if echo "$RECENT_LOGS" | grep -q "OS version after update"; then
+                echo "✅ Post-reboot OS version check completed!"
+                VERIFICATION_COMPLETE=true
+                break
+              fi
+
+              echo "Waiting for post-reboot verification to complete (${POST_REBOOT_ELAPSED_TIME}s elapsed)..."
+
+              # Show recent logs
+              echo "=== Recent agent logs ==="
+              echo "$RECENT_LOGS"
+              echo "========================"
+
+              sleep 10
+            done
+
+            if [ $VERIFICATION_COMPLETE = true ]; then
+              echo "✅ Upgrade process successfully completed after reboot!"
+            else
+              echo "⚠️ Could not confirm post-reboot verification completion within timeout."
+            fi
+          else
+            echo "⚠️ Warning: One or both containers did not restart automatically:"
+            echo "  - Agent container running: ${AGENT_RUNNING}"
+            echo "  - Server container running: ${SERVER_RUNNING}"
+          fi
+
           break
         fi
         echo "SSH not yet available, waiting 5 seconds... (attempt $i of 6)"
@@ -493,6 +587,21 @@ if [[ "$FAKE_REBOOT" == "false" || "$REBOOT_DETECTED" == "true" ]]; then
   run_ssh "uptime -s" || echo "Could not check system uptime"
   echo ""
 
+  # Check upgrade state file to see if it was created and cleared properly
+  echo "Checking upgrade state file status:"
+  run_ssh "sudo ls -la ${REMOTE_CONFIG_DIR}/ 2>/dev/null || echo 'Upgrade state directory not found'"
+  echo ""
+
+  # Check agent logs for post-reboot verification
+  echo "Checking agent logs for post-reboot verification:"
+  run_ssh "docker logs ${CONTAINER_NAME} 2>&1 | grep -E 'post-reboot|upgrade state|version after'" || echo "No post-reboot verification found in logs"
+  echo ""
+
+  # Check if the upgrade was completed
+  echo "Checking final upgrade status:"
+  run_ssh "docker logs ${CONTAINER_NAME} 2>&1 | grep -E 'Upgrade to version .* completed successfully'" || echo "No upgrade completion message found"
+  echo ""
+
   echo "You can manually connect to the system with:"
   echo "ssh ${SSH_USER:-admin}@${SERVER_IP}"
   echo ""
@@ -519,8 +628,8 @@ run_ssh "
 docker stop ${CONTAINER_NAME} ${SERVER_CONTAINER_NAME}
 docker rm ${CONTAINER_NAME} ${SERVER_CONTAINER_NAME}
 rm -f /tmp/upgrade-server-image.tar /tmp/upgrade-agent-image.tar
-# Remove config directory with sudo to ensure it works regardless of ownership
-sudo rm -rf /tmp/upgrade-agent-config
+# Clean up the persistent state directory on host
+sudo rm -rf ${REMOTE_CONFIG_DIR}
 "
 
 # Clean up local temporary files

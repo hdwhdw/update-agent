@@ -64,6 +64,16 @@ func (a *Agent) Initialize(cfg config.Config) error {
 	a.lastVersion = cfg.TargetVersion
 
 	log.Printf("Agent initialized with target version: %s", cfg.TargetVersion)
+
+	// Check if we need to resume an upgrade after reboot
+	state, err := loadUpgradeState()
+	if err != nil {
+		log.Printf("Warning: Failed to load upgrade state: %v", err)
+	} else if state.InProgress {
+		log.Printf("Detected incomplete upgrade to version %s. Resuming post-reboot verification...", state.TargetVersion)
+		go a.performPostRebootVerification(state.Config)
+	}
+
 	return nil
 }
 
@@ -142,6 +152,19 @@ func (a *Agent) performUpdate(cfg config.Config) {
 
 	log.Printf("Firmware update to version %s completed successfully", cfg.TargetVersion)
 
+	// Save the upgrade state before initiating reboot
+	state := UpgradeState{
+		InProgress:    true,
+		TargetVersion: cfg.TargetVersion,
+		Config:        cfg,
+	}
+
+	if err := saveUpgradeState(state); err != nil {
+		log.Printf("Warning: Failed to save upgrade state: %v", err)
+	} else {
+		log.Printf("Saved upgrade state before reboot")
+	}
+
 	// Initiate a system reboot after successful firmware update
 	log.Printf("Initiating system reboot to complete firmware update process")
 	rebootCtx, rebootCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -150,64 +173,44 @@ func (a *Agent) performUpdate(cfg config.Config) {
 	if err := client.Reboot(rebootCtx); err != nil {
 		if a.shouldIgnoreError(err, cfg) {
 			log.Printf("Reboot RPC unimplemented, skipping ahead: %v", err)
+			// Since we're not actually rebooting, continue with post-reboot verification
+			a.performPostRebootVerification(cfg)
 		} else {
 			log.Printf("Warning: Failed to initiate reboot after firmware update: %v", err)
-		}
-		// Continue with post-update checks even if reboot request fails
-	} else {
-		log.Printf("System reboot request sent successfully")
-
-		// Wait for reboot to complete
-		log.Printf("Waiting for system to reboot...")		// Give the system some time to start rebooting
-		log.Printf("Waiting 10 seconds for system to begin reboot process...")
-		time.Sleep(10 * time.Second)
-
-		// Poll for reboot completion with a reasonable timeout
-		rebootWaitCtx, rebootWaitCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer rebootWaitCancel()// Poll the reboot status until either the reboot is complete or timeout occurs
-		rebootComplete := false
-		rebootPollTimer := time.NewTicker(10 * time.Second)
-		defer rebootPollTimer.Stop()
-
-		for !rebootComplete {
-			select {
-			case <-rebootWaitCtx.Done():
-				log.Printf("Timeout waiting for reboot to complete")
-				// In case of timeout, just proceed with the rest of the flow
-				rebootComplete = true
-			case <-rebootPollTimer.C:
-				log.Printf("Checking if device has completed reboot...")
-				// Try to check reboot status
-				statusCtx, statusCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				resp, err := client.GetRebootStatus(statusCtx)
-				statusCancel()
-
-				if err != nil {
-					if a.shouldIgnoreError(err, cfg) {
-						log.Printf("Reboot status RPC unimplemented, assuming reboot complete: %v", err)
-						rebootComplete = true
-					} else {
-						log.Printf("Device unreachable during reboot (expected): %v", err)
-						// Connection error is expected during reboot, continue polling
-					}
-					continue
-				}
-
-				// If we can contact the device, check reboot status
-				if !resp.GetActive() {
-					log.Printf("System reboot completed successfully")
-					rebootComplete = true
-				} else {
-					log.Printf("Device reboot still in progress, continuing to wait...")
-				}
+			// Clear the upgrade state since the reboot failed
+			if err := clearUpgradeState(); err != nil {
+				log.Printf("Warning: Failed to clear upgrade state: %v", err)
 			}
 		}
+	} else {
+		log.Printf("System reboot request sent successfully")
+		log.Printf("Agent will be terminated by the reboot. Post-reboot verification will resume after restart.")
 
-		// Allow some additional time for all services to fully initialize
-		log.Printf("Waiting for system services to stabilize (60 seconds)...")
-		time.Sleep(60 * time.Second)
-		log.Printf("System stabilization period complete, proceeding with post-update verification")
+		// Give some time for the logs to be written and the reboot to start
+		time.Sleep(5 * time.Second)
+
+		// The agent will be terminated here by the system reboot
+		// The remaining verification will be performed when the agent restarts
 	}
+}
+
+// performPostRebootVerification performs the verification steps after a reboot
+func (a *Agent) performPostRebootVerification(cfg config.Config) {
+	log.Printf("Starting post-reboot verification for version %s", cfg.TargetVersion)
+
+	a.lock.Lock()
+	client := a.client
+	a.lock.Unlock()
+
+	if client == nil {
+		log.Println("Cannot perform post-reboot verification: client not initialized")
+		return
+	}
+
+	// Wait for system services to stabilize
+	log.Printf("Waiting for system services to stabilize (60 seconds)...")
+	time.Sleep(60 * time.Second)
+	log.Printf("System stabilization period complete, proceeding with post-update verification")
 
 	// Get OS version after update via gNOI.OS.Verify to confirm successful update
 	postUpdateOsCtx, postUpdateOsCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -223,6 +226,13 @@ func (a *Agent) performUpdate(cfg config.Config) {
 		if failMsg := postUpdateOsResp.GetActivationFailMessage(); failMsg != "" {
 			log.Printf("Update activation failure message: %s", failMsg)
 		}
+	}
+
+	// Clear the upgrade state file since we've completed the verification
+	if err := clearUpgradeState(); err != nil {
+		log.Printf("Warning: Failed to clear upgrade state: %v", err)
+	} else {
+		log.Printf("Upgrade to version %s completed successfully", cfg.TargetVersion)
 	}
 }
 
