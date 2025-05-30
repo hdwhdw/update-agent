@@ -152,6 +152,8 @@ touch /tmp${FIRMWARE_SOURCE}
 # Mount the entire host filesystem for simplicity and full access to all OS information
 docker run --name upgrade-server-test \\
   --network=host \\
+  --ipc=host \\
+  --pid=host \\
   --privileged \\
   --restart=always \\
   --cap-add=SYS_BOOT \\
