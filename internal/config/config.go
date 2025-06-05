@@ -92,15 +92,6 @@ func (m *Manager) StartWatcher() error {
 		defer ticker.Stop()
 
 		for range ticker.C {
-			// Read and log the entire file content
-			data, err := os.ReadFile(m.configPath)
-			if err != nil {
-				log.Printf("Error reading config file: %v", err)
-				continue
-			}
-
-			log.Printf("Config file content: %s", string(data))
-
 			// Check for changes and reload if needed
 			if err := m.loadConfig(); err != nil {
 				log.Printf("Error reloading config: %v", err)
