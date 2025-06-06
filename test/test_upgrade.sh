@@ -245,8 +245,8 @@ docker run --name ${CONTAINER_NAME} \\
   --network=host \\
   -v ${REMOTE_CONFIG_DIR}:${CONFIG_MOUNT_PATH}:z \\
   -v /tmp${FIRMWARE_SOURCE}:${FIRMWARE_MOUNT_PATH}:z \\
+  -v /etc/sonic:/etc/sonic:z \\
   --restart=always \\
-  --user $(id -u):$(id -g) \\
   --detach \\
   upgrade-agent:latest
 echo \"Agent container started on \$(hostname)\"
@@ -588,13 +588,13 @@ if [[ "$FAKE_REBOOT" == "false" || "$REBOOT_DETECTED" == "true" ]]; then
   echo ""
 
   # Check upgrade state file to see if it was created and cleared properly
-  echo "Checking upgrade state file status:"
-  run_ssh "sudo ls -la ${REMOTE_CONFIG_DIR}/ 2>/dev/null || echo 'Upgrade state directory not found'"
+  echo "Checking post upgrade done file status:"
+  run_ssh "sudo ls -la /etc/sonic/post_upgrade_done 2>/dev/null || echo 'Post upgrade done file not found'"
   echo ""
 
   # Check agent logs for post-reboot verification
   echo "Checking agent logs for post-reboot verification:"
-  run_ssh "docker logs ${CONTAINER_NAME} 2>&1 | grep -E 'post-reboot|upgrade state|version after'" || echo "No post-reboot verification found in logs"
+  run_ssh "docker logs ${CONTAINER_NAME} 2>&1 | grep -E 'post-reboot|upgrade in progress|post_upgrade_done|version after'" || echo "No post-reboot verification found in logs"
   echo ""
 
   # Check if the upgrade was completed

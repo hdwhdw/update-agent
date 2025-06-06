@@ -70,8 +70,8 @@ func (a *Agent) Initialize(cfg config.Config) error {
 	if err != nil {
 		log.Printf("Warning: Failed to load upgrade state: %v", err)
 	} else if state.InProgress {
-		log.Printf("Detected incomplete upgrade to version %s. Resuming post-reboot verification...", state.TargetVersion)
-		go a.performPostRebootVerification(state.Config)
+		log.Printf("Detected incomplete upgrade. Resuming post-reboot verification...")
+		go a.performPostRebootVerification(cfg)
 	}
 
 	return nil
@@ -162,7 +162,7 @@ func (a *Agent) performUpdate(cfg config.Config) {
 	if err := saveUpgradeState(state); err != nil {
 		log.Printf("Warning: Failed to save upgrade state: %v", err)
 	} else {
-		log.Printf("Saved upgrade state before reboot")
+		log.Printf("Marked upgrade in progress before reboot")
 	}
 
 	// Initiate a system reboot after successful firmware update
@@ -179,7 +179,7 @@ func (a *Agent) performUpdate(cfg config.Config) {
 			log.Printf("Warning: Failed to initiate reboot after firmware update: %v", err)
 			// Clear the upgrade state since the reboot failed
 			if err := clearUpgradeState(); err != nil {
-				log.Printf("Warning: Failed to clear upgrade state: %v", err)
+				log.Printf("Warning: Failed to mark post-upgrade completion: %v", err)
 			}
 		}
 	} else {
@@ -230,9 +230,9 @@ func (a *Agent) performPostRebootVerification(cfg config.Config) {
 
 	// Clear the upgrade state file since we've completed the verification
 	if err := clearUpgradeState(); err != nil {
-		log.Printf("Warning: Failed to clear upgrade state: %v", err)
+		log.Printf("Warning: Failed to mark post-upgrade completion: %v", err)
 	} else {
-		log.Printf("Upgrade to version %s completed successfully", cfg.TargetVersion)
+		log.Printf("Upgrade completed successfully and marked as done")
 	}
 }
 

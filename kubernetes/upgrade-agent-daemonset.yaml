@@ -28,6 +28,8 @@ spec:
           mountPath: /firmware
         - name: host-filesystem
           mountPath: /host
+        - name: sonic-config
+          mountPath: /etc/sonic
       volumes:
       - name: config-volume
         configMap:
@@ -37,5 +39,9 @@ spec:
       - name: host-filesystem
         hostPath:
           path: /
+          type: Directory
+      - name: sonic-config
+        hostPath:
+          path: /etc/sonic
           type: Directory
       restartPolicy: Always

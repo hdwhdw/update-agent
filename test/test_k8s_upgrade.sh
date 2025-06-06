@@ -131,7 +131,7 @@ run_ssh "docker exec ${AGENT_CONTAINER} cat /etc/upgrade-agent/config.yaml"
 echo "Updating target version to trigger an upgrade..."
 TEMP_CONFIG=$(mktemp)
 ${MINIKUBE_PREFIX} get configmap upgrade-agent-config -o yaml > ${TEMP_CONFIG}
-sed -i 's/targetVersion: "1.2.4"/targetVersion: "1.2.5"/' ${TEMP_CONFIG}
+sed -i 's/targetVersion: "1.2.1"/targetVersion: "1.2.2"/' ${TEMP_CONFIG}
 ${MINIKUBE_PREFIX} apply -f ${TEMP_CONFIG}
 rm ${TEMP_CONFIG}
 
@@ -144,7 +144,7 @@ run_ssh "docker exec ${AGENT_CONTAINER} cat /etc/upgrade-agent/config.yaml"
 # Stream logs from both containers using SSH and docker logs
 echo "Streaming logs from agent and server containers..."
 echo "=== AGENT LOGS ==="
-run_ssh "docker logs -f ${AGENT_CONTAINER}" &
+run_ssh "docker logs -f ${AGENT_CONTAINER} | grep -E 'post-reboot|upgrade in progress|post_upgrade_done|version after'" &
 AGENT_LOG_PID=$!
 
 echo "=== SERVER LOGS ==="
@@ -154,6 +154,10 @@ SERVER_LOG_PID=$!
 # Wait for logs to show for a while
 echo "Monitoring logs for 60 seconds..."
 sleep 60
+
+# Check for post_upgrade_done file
+echo "Checking for post_upgrade_done file..."
+run_ssh "ls -la /etc/sonic/post_upgrade_done 2>/dev/null || echo 'Post upgrade done file not found'"
 
 # Cleanup
 echo "Cleaning up..."

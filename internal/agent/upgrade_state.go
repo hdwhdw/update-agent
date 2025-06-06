@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,80 +9,79 @@ import (
 )
 
 const (
-	stateFilePath = "/var/tmp/upgrade-agent-state.json" // Use /var/tmp which is inside the container
+	// Simple flag file to indicate if post-upgrade check has been completed
+	postUpgradeDoneFile = "/etc/sonic/post_upgrade_done"
 )
 
-// UpgradeState tracks the current upgrade process state
+// UpgradeState tracks the current upgrade process state (simplified)
 type UpgradeState struct {
-	InProgress    bool   `json:"inProgress"`
-	TargetVersion string `json:"targetVersion"`
-	Config        config.Config `json:"config"`
+	InProgress    bool
+	TargetVersion string
+	Config        config.Config
 }
 
-// saveUpgradeState persists the upgrade state to a file
+// saveUpgradeState marks that an upgrade is in progress
 func saveUpgradeState(state UpgradeState) error {
+	// Just delete the post_upgrade_done file to indicate an upgrade is needed
+	if err := os.Remove(postUpgradeDoneFile); err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("Failed to remove post upgrade done file: %v", err)
+			return err
+		}
+	}
+
 	// Ensure directory exists
-	dir := filepath.Dir(stateFilePath)
+	dir := filepath.Dir(postUpgradeDoneFile)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		log.Printf("Failed to create state directory: %v", err)
 		return err
 	}
 
-	// Marshal to JSON
-	data, err := json.Marshal(state)
-	if err != nil {
-		return err
-	}
-
-	// Write to file
-	if err := os.WriteFile(stateFilePath, data, 0644); err != nil {
-		log.Printf("Failed to write state file: %v", err)
-		return err
-	}
-
-	log.Printf("Successfully saved upgrade state to %s", stateFilePath)
+	log.Printf("Successfully marked upgrade in progress by removing %s", postUpgradeDoneFile)
 	return nil
 }
 
-// loadUpgradeState loads the upgrade state from a file
+// loadUpgradeState checks if a post-upgrade verification is needed
 func loadUpgradeState() (UpgradeState, error) {
 	var state UpgradeState
 
-	data, err := os.ReadFile(stateFilePath)
+	// Check if the post_upgrade_done file exists
+	_, err := os.Stat(postUpgradeDoneFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// No state file exists, return empty state
-			log.Printf("No upgrade state file found at %s", stateFilePath)
+			// File does not exist, post-upgrade check is needed
+			state.InProgress = true
+			log.Printf("Post-upgrade verification needed: %s not found", postUpgradeDoneFile)
 			return state, nil
 		}
-		log.Printf("Error reading upgrade state file: %v", err)
+		// Some other error occurred
+		log.Printf("Error checking post upgrade done file: %v", err)
 		return state, err
 	}
 
-	// Unmarshal from JSON
-	err = json.Unmarshal(data, &state)
-	if err != nil {
-		log.Printf("Error parsing upgrade state file: %v", err)
-		return state, err
-	}
-
-	log.Printf("Successfully loaded upgrade state: target version=%s, in progress=%v",
-		state.TargetVersion, state.InProgress)
-	return state, err
+	// File exists, no post-upgrade check needed
+	state.InProgress = false
+	log.Printf("Post-upgrade verification not needed: %s exists", postUpgradeDoneFile)
+	return state, nil
 }
 
-// clearUpgradeState removes the upgrade state file
+// clearUpgradeState marks that the post-upgrade check is complete
 func clearUpgradeState() error {
-	err := os.Remove(stateFilePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Printf("No upgrade state file to clear at %s", stateFilePath)
-			return nil
-		}
-		log.Printf("Error clearing upgrade state file: %v", err)
+	// Create an empty file to indicate post-upgrade is done
+	dir := filepath.Dir(postUpgradeDoneFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("Failed to create state directory: %v", err)
 		return err
 	}
 
-	log.Printf("Successfully cleared upgrade state file")
+	// Create the file
+	f, err := os.Create(postUpgradeDoneFile)
+	if err != nil {
+		log.Printf("Failed to create post upgrade done file: %v", err)
+		return err
+	}
+	defer f.Close()
+
+	log.Printf("Successfully marked post-upgrade complete by creating %s", postUpgradeDoneFile)
 	return nil
 }
